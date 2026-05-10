@@ -196,32 +196,26 @@ class TestAnthropicAdapter:
 # ---------------------------------------------------------------------------
 
 class TestGoogleAdapter:
+    def _google_modules(self, response_text):
+        mock_genai = _make_google_mock(response_text)
+        google_mock = MagicMock()
+        google_mock.generativeai = mock_genai
+        return {"google": google_mock, "google.generativeai": mock_genai}
+
     def test_valid_json_response_parsed(self):
-        mock_genai = _make_google_mock(json.dumps(_VALID_RESPONSE))
-        with patch.dict(sys.modules, {
-            "google": MagicMock(),
-            "google.generativeai": mock_genai,
-        }):
+        with patch.dict(sys.modules, self._google_modules(json.dumps(_VALID_RESPONSE))):
             from harness.providers import google_adapter
             result = google_adapter("gemini-1.5-pro", "AIza-fake", "sys", "user")
         assert result["commands"] == ["/run-backtest"]
 
     def test_empty_response_raises(self):
-        mock_genai = _make_google_mock(response_text=None)
-        with patch.dict(sys.modules, {
-            "google": MagicMock(),
-            "google.generativeai": mock_genai,
-        }):
+        with patch.dict(sys.modules, self._google_modules(None)):
             from harness.providers import google_adapter
             with pytest.raises(ValueError, match="empty"):
                 google_adapter("gemini-1.5-pro", "AIza-fake", "sys", "user")
 
     def test_invalid_json_raises(self):
-        mock_genai = _make_google_mock("{bad json")
-        with patch.dict(sys.modules, {
-            "google": MagicMock(),
-            "google.generativeai": mock_genai,
-        }):
+        with patch.dict(sys.modules, self._google_modules("{bad json")):
             from harness.providers import google_adapter
             with pytest.raises(ValueError, match="not valid JSON"):
                 google_adapter("gemini-1.5-pro", "AIza-fake", "sys", "user")
