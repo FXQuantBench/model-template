@@ -79,10 +79,18 @@ def openai_compatible(
     system_prompt: str,
     user_message: str,
 ) -> dict:
-    """Use JSON Schema response_format for strictly-structured output."""
+    """Use JSON Schema response_format for strictly-structured output.
+
+    Supports any OpenAI-compatible endpoint. Set the ``MODEL_BASE_URL``
+    environment variable to override the default OpenAI API base URL
+    (e.g. ``https://api.mistral.ai/v1`` or a local vLLM/Ollama endpoint).
+    When ``MODEL_BASE_URL`` is not set, the official OpenAI API is used.
+    """
+    import os  # noqa: PLC0415
     import openai  # noqa: PLC0415
 
-    client = openai.OpenAI(api_key=api_key)
+    base_url = os.environ.get("MODEL_BASE_URL", "").strip() or None
+    client = openai.OpenAI(api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
         model=model_id,
         response_format={

@@ -58,8 +58,8 @@ model-template/
 | Requirement | Notes |
 |---|---|
 | GitHub account | Must have permission to fork the `fxquantbench/model-template` repo |
-| GitHub PAT (bot) | See [§ 3.2](#32-create-a-bot-account-and-pat) |
-| LLM API key | OpenAI, Anthropic, or Google — one is enough |
+| `BENCHMARK_BOT_TOKEN` | **Provided automatically** — this is an org-level secret on `fxquantbench`; no action required |
+| LLM API key | Any OpenAI-compatible endpoint, Anthropic, or Google — one is enough |
 | HuggingFace token | Read-only token for `FXQuantBench/fx-ticks` dataset |
 
 No local tooling is required to run the benchmark — everything executes in GitHub Actions. A local Python ≥ 3.11 environment (or `uv`) is only needed to run tests and iterate on `strategy.py` before letting the agent take over.
@@ -79,18 +79,11 @@ git clone https://github.com/<your-org>/<your-repo>.git
 cd <your-repo>
 ```
 
-### 3.2 Create a bot account and PAT
+### 3.2 Bot token (org secret — no action required)
 
-The workflows push commits and interact with the shared leaderboard repo. They need a GitHub PAT stored as `BENCHMARK_BOT_TOKEN`.
+`BENCHMARK_BOT_TOKEN` is an **organisation-level secret** managed by `fxquantbench`. It is automatically inherited by every repository created from this template inside the org. You do not need to create a bot account or generate a PAT.
 
-1. Create (or use an existing) GitHub account for the bot — e.g. `yourorg-bot`.
-2. Add the bot as a collaborator on **your forked repo** with **Write** access.
-3. Generate a **classic PAT** for the bot account with the following scopes:
-   - `repo` (full)
-   - `workflow`
-4. Copy the token — you will add it in § 3.3.
-
-> The PAT must also have **read** access to `fxquantbench/leaderboard` (the benchmark admin will grant this when you register).
+If you are forking outside the `fxquantbench` org, contact the benchmark admin to have your repo added to the secret's access list.
 
 ### 3.3 Configure secrets
 
@@ -98,9 +91,10 @@ Go to **Settings → Secrets and variables → Actions → Secrets** in your rep
 
 | Secret name | Value |
 |---|---|
-| `BENCHMARK_BOT_TOKEN` | The PAT from § 3.2 |
-| `MODEL_API_KEY` | Your LLM provider API key (OpenAI / Anthropic / Google) |
+| `MODEL_API_KEY` | Your LLM provider API key |
 | `HF_TOKEN_RO` | HuggingFace read-only token for the tick dataset |
+
+`BENCHMARK_BOT_TOKEN` is inherited from the org — do not add it manually.
 
 ### 3.4 Configure variables
 
@@ -112,18 +106,26 @@ Go to **Settings → Secrets and variables → Actions → Variables** and add:
 | `MODEL_ID` | Yes | Model identifier string | `gpt-4o` |
 | `IN_SAMPLE_START` | Yes | Inclusive start of the training window (`YYYY-MM-DD`) | `2022-01-03` |
 | `IN_SAMPLE_END` | Yes | Exclusive end of the training window (`YYYY-MM-DD`) | `2024-01-01` |
+| `MODEL_BASE_URL` | No | Override the API base URL for `openai` provider (any OpenAI-compatible endpoint) | `https://api.mistral.ai/v1` |
 | `MAX_DAILY_ITERATIONS` | No | Max agentic loop runs per day (default: `6`) | `6` |
 | `EDA_ARCHIVE_THRESHOLD` | No | Archive oldest EDA files when count exceeds this (default: `30`) | `30` |
 
 ### 3.5 Choose a provider and model
 
-Three LLM providers are supported out of the box. Set `MODEL_PROVIDER` and `MODEL_ID` accordingly:
+Set `MODEL_PROVIDER` and `MODEL_ID` to select your model. The `openai` provider supports **any OpenAI-compatible REST API** — set `MODEL_BASE_URL` to point at a different endpoint.
 
-| `MODEL_PROVIDER` | Example `MODEL_ID` values | SDK used |
-|---|---|---|
-| `openai` | `gpt-4o`, `gpt-4-turbo`, `o3` | `openai` Python SDK — structured output via JSON schema |
-| `anthropic` | `claude-3-5-sonnet-20241022`, `claude-opus-4-5` | `anthropic` SDK — forced tool-use for structured output |
-| `google` | `gemini-1.5-pro`, `gemini-2.0-flash` | `google-generativeai` SDK — `response_mime_type="application/json"` |
+| `MODEL_PROVIDER` | `MODEL_BASE_URL` | Example `MODEL_ID` values | Notes |
+|---|---|---|---|
+| `openai` | *(unset — default)* | `gpt-4o`, `gpt-4-turbo`, `o3` | Official OpenAI API |
+| `openai` | `https://api.mistral.ai/v1` | `mistral-large-latest`, `mistral-medium` | Mistral via OpenAI-compatible API |
+| `openai` | `https://api.together.xyz/v1` | `meta-llama/Llama-3-70b-chat-hf` | Together.ai |
+| `openai` | `https://openrouter.ai/api/v1` | any OpenRouter model slug | OpenRouter |
+| `openai` | `http://localhost:11434/v1` | `llama3`, `qwen2.5` | Local Ollama instance |
+| `openai` | `http://localhost:8000/v1` | model name served by vLLM | Local vLLM server |
+| `anthropic` | *(n/a)* | `claude-3-5-sonnet-20241022`, `claude-opus-4-5` | Forced tool-use for structured output |
+| `google` | *(n/a)* | `gemini-1.5-pro`, `gemini-2.0-flash` | `response_mime_type="application/json"` |
+
+> **Note:** Some OpenAI-compatible endpoints do not support the `json_schema` response format. If you hit errors with structured output, the model or endpoint may require a plain `json_object` mode — open an issue to request support for that endpoint.
 
 The model receives the full `prompt_context.md` as the system prompt plus dynamic context (leaderboard summaries, current `strategy.py`, recent thoughts) as the user message.
 
@@ -142,9 +144,10 @@ Trigger the agentic loop manually to confirm everything is wired up:
 3. Check that a commit appears on the `dev` branch and `audit_logs/thoughts.md` was updated.
 
 If the run fails, the most common causes are:
-- `BENCHMARK_BOT_TOKEN` does not have `workflow` scope
 - `MODEL_PROVIDER` or `MODEL_ID` variable is missing
-- `MODEL_API_KEY` secret is set on the wrong secret name (must be exactly `MODEL_API_KEY`)
+- `MODEL_API_KEY` secret is not set or is set under a different name (must be exactly `MODEL_API_KEY`)
+- `MODEL_BASE_URL` points to an endpoint that does not support `json_schema` response format
+- `BENCHMARK_BOT_TOKEN` was not inherited from the org (check **Settings → Secrets** — it should appear as an org secret, not a repo secret)
 
 ---
 
