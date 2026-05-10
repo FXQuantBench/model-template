@@ -1,0 +1,177 @@
+name: Run Backtest
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+
+    steps:
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+          fetch-depth: 0
+          ref: dev
+
+      - name: Configure git
+        run: |
+          git config user.name  "benchmark-bot"
+          git config user.email "benchmark-bot@fxquantbench.io"
+
+      - name: Guard — thoughts.md updated in latest commit
+        run: |
+          if ! git diff HEAD~1 HEAD --name-only 2>/dev/null | grep -q "audit_logs/thoughts.md"; then
+            echo "ERROR: audit_logs/thoughts.md was not modified in the latest commit."
+            echo "Update thoughts.md with your reasoning before issuing /run-backtest."
+            exit 1
+          fi
+
+      - name: Compute run_id
+        id: run_id
+        run: |
+          RUN_ID="$(date -u +%Y-%m-%d)-$(git rev-parse --short HEAD)"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "strategy_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Run backtest container
+        run: |
+          mkdir -p "$RUNNER_TEMP/backtest_output"
+          docker run \
+            --memory=4g \
+            --cpus=2 \
+            --rm \
+            -e MODE=backtest \
+            -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
+            -e START_DATE="${{ vars.IN_SAMPLE_START }}" \
+            -e END_DATE="${{ vars.IN_SAMPLE_END }}" \
+            -e RUN_ID="${{ steps.run_id.outputs.run_id }}" \
+            -e MODEL_ID="${{ vars.MODEL_ID }}" \
+            -e OUTPUT_DIR="/output" \
+            -e STRATEGY_SHA="${{ steps.run_id.outputs.strategy_sha }}" \
+            -v "$GITHUB_WORKSPACE:/sandbox:ro" \
+            -v "$RUNNER_TEMP/backtest_output:/output" \
+            ghcr.io/fxquantbench/strategy-runner:latest
+          cp "$RUNNER_TEMP/backtest_output/result.json" "$GITHUB_WORKSPACE/result.json"
+
+      - name: Validate result.json
+        run: |
+          pip install --quiet pydantic
+          python3 - <<'PYEOF'
+          import json, math, sys
+          from pydantic import BaseModel, field_validator
+
+          class ResultSchema(BaseModel):
+              run_id: str
+              mode: str
+              model_id: str
+              strategy_sha: str
+              start_date: str
+              end_date: str
+              sharpe: float
+              max_drawdown: float
+              win_rate: float
+              calmar_ratio: float
+              annualized_return: float
+              volatility: float
+              total_trades: int
+              avg_spread_cost_pips: float
+              runtime_seconds: float
+              completed_at: str
+              timed_out: bool
+
+              @field_validator("sharpe", "max_drawdown", "win_rate", "calmar_ratio",
+                               "annualized_return", "volatility", "avg_spread_cost_pips",
+                               "runtime_seconds")
+              @classmethod
+              def no_nan_inf(cls, v):
+                  if math.isnan(v) or math.isinf(v):
+                      return 0.0
+                  return v
+
+          with open("result.json") as f:
+              data = json.load(f)
+          result = ResultSchema(**data)
+          if result.timed_out:
+              print("WARNING: backtest timed out.", file=sys.stderr)
+          print(f"Validated: sharpe={result.sharpe:.4f} mdd={result.max_drawdown:.4f} win_rate={result.win_rate:.4f}")
+          PYEOF
+
+      - name: Commit result to leaderboard
+        run: |
+          RUN_ID="${{ steps.run_id.outputs.run_id }}"
+          MODEL_ID="${{ vars.MODEL_ID }}"
+          DEST_PATH="${MODEL_ID}/results/backtest/${RUN_ID}.json"
+
+          git clone \
+            --depth=1 \
+            "https://x-access-token:${{ secrets.BENCHMARK_BOT_TOKEN }}@github.com/fxquantbench/leaderboard.git" \
+            /tmp/leaderboard
+
+          mkdir -p "/tmp/leaderboard/$(dirname "$DEST_PATH")"
+          cp result.json "/tmp/leaderboard/${DEST_PATH}"
+
+          cd /tmp/leaderboard
+          git config user.name  "benchmark-bot"
+          git config user.email "benchmark-bot@fxquantbench.io"
+          git add "$DEST_PATH"
+          git commit -m "backtest: ${MODEL_ID} ${RUN_ID}"
+          git push origin HEAD
+
+      - name: Append summary to releases.md
+        run: |
+          RUN_ID="${{ steps.run_id.outputs.run_id }}"
+          python3 - <<PYEOF
+          import json
+          with open("result.json") as f:
+              d = json.load(f)
+          line = f"Run {d['run_id']} | Sharpe {d['sharpe']:.4f} | MDD {d['max_drawdown']:.4f} | WinRate {d['win_rate']:.4f}"
+          with open("releases.md", "a") as f:
+              f.write(f"\n{line}\n")
+          print(line)
+          PYEOF
+
+      - name: Write job summary
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+          with open("result.json") as f:
+              d = json.load(f)
+          summary = f"""## Backtest Result — {d['run_id']}
+
+          | Metric | Value |
+          |---|---|
+          | Run ID | `{d['run_id']}` |
+          | Mode | {d['mode']} |
+          | Model ID | {d['model_id']} |
+          | Strategy SHA | `{d['strategy_sha'][:12]}` |
+          | Start Date | {d['start_date']} |
+          | End Date | {d['end_date']} |
+          | Sharpe | {d['sharpe']:.4f} |
+          | Max Drawdown | {d['max_drawdown']:.4f} |
+          | Win Rate | {d['win_rate']:.4f} |
+          | Calmar Ratio | {d['calmar_ratio']:.4f} |
+          | Annualized Return | {d['annualized_return']:.4f} |
+          | Volatility | {d['volatility']:.4f} |
+          | Total Trades | {d['total_trades']} |
+          | Avg Spread Cost (pips) | {d['avg_spread_cost_pips']:.4f} |
+          | Runtime (s) | {d['runtime_seconds']:.1f} |
+          | Completed At | {d['completed_at']} |
+          | Timed Out | {d['timed_out']} |
+          """
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(summary)
+          PYEOF
+
+      - name: Commit releases.md and push
+        run: |
+          git add releases.md
+          git diff --cached --quiet && echo "No changes." || \
+            git commit -m "backtest: ${{ steps.run_id.outputs.run_id }} — update releases.md"
+          git push origin dev

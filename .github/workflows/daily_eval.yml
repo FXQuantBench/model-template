@@ -1,0 +1,167 @@
+name: Daily Eval
+
+on:
+  schedule:
+    - cron: '30 8 * * 2-6'
+  workflow_dispatch:
+    inputs:
+      eval_date:
+        description: "Override eval date (YYYY-MM-DD). Defaults to yesterday."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    env:
+      GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+          fetch-depth: 1
+          ref: main
+
+      - name: Compute eval_date
+        id: date
+        run: |
+          if [ -n "${{ inputs.eval_date }}" ]; then
+            EVAL_DATE="${{ inputs.eval_date }}"
+          else
+            EVAL_DATE=$(python3 -c "from datetime import date, timedelta; print((date.today() - timedelta(days=1)).isoformat())")
+          fi
+          echo "eval_date=$EVAL_DATE" >> "$GITHUB_OUTPUT"
+          echo "strategy_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Eval date: $EVAL_DATE"
+
+      - name: Guard — idempotency check
+        run: |
+          EVAL_DATE="${{ steps.date.outputs.eval_date }}"
+          MODEL_ID="${{ vars.MODEL_ID }}"
+          STATUS=$(gh api \
+            "repos/fxquantbench/leaderboard/contents/${MODEL_ID}/results/eval/${EVAL_DATE}.json" \
+            --jq '.name' 2>/dev/null || echo "")
+          if [ -n "$STATUS" ]; then
+            echo "Skipping: eval result for ${EVAL_DATE} already exists in leaderboard."
+            echo "SKIP_JOB=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Confirm HF shard exists for eval_date
+        if: env.SKIP_JOB != 'true'
+        run: |
+          EVAL_DATE="${{ steps.date.outputs.eval_date }}"
+          pip install --quiet duckdb
+          python3 - <<PYEOF
+          import duckdb, os, sys
+
+          hf_token = os.environ["HF_TOKEN_RO"]
+          eval_date = "$EVAL_DATE"
+
+          conn = duckdb.connect()
+          conn.execute("INSTALL httpfs; LOAD httpfs;")
+          conn.execute(f"SET hf_token='{hf_token}';")
+
+          # Compute millisecond bounds for the eval day
+          from datetime import datetime, timezone, timedelta
+          day_start = datetime.strptime(eval_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+          day_end   = day_start + timedelta(days=1)
+          start_ms  = int(day_start.timestamp() * 1000)
+          end_ms    = int(day_end.timestamp() * 1000)
+
+          try:
+              count = conn.execute(f"""
+                  SELECT COUNT(*) FROM read_parquet('hf://datasets/FXQuantBench/fx-ticks/*.parquet')
+                  WHERE pair = 'GBPUSD'
+                    AND timestamp_utc >= {start_ms}
+                    AND timestamp_utc <  {end_ms}
+              """).fetchone()[0]
+          except Exception as e:
+              print(f"ERROR querying HF dataset: {e}", file=sys.stderr)
+              sys.exit(2)
+
+          if count == 0:
+              print(f"MISSING: No GBPUSD rows found for {eval_date} in HF dataset.", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: {count} rows found for {eval_date}.")
+          PYEOF
+        env:
+          HF_TOKEN_RO: ${{ secrets.HF_TOKEN_RO }}
+        id: shard_check
+        continue-on-error: true
+
+      - name: Open issue if shard missing
+        if: steps.shard_check.outcome == 'failure'
+        run: |
+          EVAL_DATE="${{ steps.date.outputs.eval_date }}"
+          gh issue create \
+            --title "Missing HF shard: ${EVAL_DATE}" \
+            --body "The daily eval workflow could not find GBPUSD tick data in \`FXQuantBench/fx-ticks\` for **${EVAL_DATE}**. The eval was skipped. Please verify the dataset and re-run once the shard is available." \
+            --label "data-missing" 2>/dev/null || true
+          echo "Issue opened for missing shard ${EVAL_DATE}. Exiting."
+          exit 1
+
+      - name: Run eval container
+        if: env.SKIP_JOB != 'true'
+        run: |
+          EVAL_DATE="${{ steps.date.outputs.eval_date }}"
+          mkdir -p "$RUNNER_TEMP/eval_output"
+          docker run \
+            --memory=4g \
+            --cpus=2 \
+            --rm \
+            -e MODE=eval \
+            -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
+            -e START_DATE="${EVAL_DATE}" \
+            -e END_DATE="${EVAL_DATE}" \
+            -e RUN_ID="${EVAL_DATE}" \
+            -e MODEL_ID="${{ vars.MODEL_ID }}" \
+            -e OUTPUT_DIR="/output" \
+            -e STRATEGY_SHA="${{ steps.date.outputs.strategy_sha }}" \
+            -v "$GITHUB_WORKSPACE:/sandbox:ro" \
+            -v "$RUNNER_TEMP/eval_output:/output" \
+            ghcr.io/fxquantbench/strategy-runner:latest
+          cp "$RUNNER_TEMP/eval_output/result.json" "$GITHUB_WORKSPACE/result.json"
+
+      - name: Ensure strategy_sha is set in result.json
+        if: env.SKIP_JOB != 'true'
+        run: |
+          SHA="${{ steps.date.outputs.strategy_sha }}"
+          python3 - <<PYEOF
+          import json
+          with open("result.json") as f:
+              d = json.load(f)
+          d["strategy_sha"] = "$SHA"
+          with open("result.json", "w") as f:
+              json.dump(d, f, indent=2)
+          print(f"strategy_sha set to {d['strategy_sha']}")
+          PYEOF
+
+      - name: Commit result to leaderboard
+        if: env.SKIP_JOB != 'true'
+        run: |
+          EVAL_DATE="${{ steps.date.outputs.eval_date }}"
+          MODEL_ID="${{ vars.MODEL_ID }}"
+          DEST_PATH="${MODEL_ID}/results/eval/${EVAL_DATE}.json"
+
+          git clone \
+            --depth=1 \
+            "https://x-access-token:${{ secrets.BENCHMARK_BOT_TOKEN }}@github.com/fxquantbench/leaderboard.git" \
+            /tmp/leaderboard
+
+          mkdir -p "/tmp/leaderboard/$(dirname "$DEST_PATH")"
+          cp result.json "/tmp/leaderboard/${DEST_PATH}"
+
+          cd /tmp/leaderboard
+          git config user.name  "benchmark-bot"
+          git config user.email "benchmark-bot@fxquantbench.io"
+          git add "$DEST_PATH"
+          git commit -m "eval: ${MODEL_ID} ${EVAL_DATE}"
+          git push origin HEAD
