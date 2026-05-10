@@ -43,7 +43,8 @@ class TestBaselineStrategy:
 
     def test_pair_is_object_or_str(self):
         df = run(self._conn(), "2024-01-01", "2024-02-01")
-        assert df["pair"].dtype == object or str(df["pair"].dtype) == "string"
+        dtype_str = str(df["pair"].dtype)
+        assert df["pair"].dtype == object or dtype_str in ("string", "str")
 
     def test_signal_is_float64(self):
         df = run(self._conn(), "2024-01-01", "2024-02-01")

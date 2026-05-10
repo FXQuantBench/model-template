@@ -274,9 +274,12 @@ def _compute_metrics(signals: pd.DataFrame, tick_data: pd.DataFrame,
         win_rate = 0.0
 
     # Annualized return over the actual date range
-    duration_years = (idx[-1] - idx[0]).total_seconds() / (365.25 * 24 * 3600)
+    duration_years = (idx.iloc[-1] - idx.iloc[0]).total_seconds() / (365.25 * 24 * 3600)
     if duration_years > 0 and total_ret > -1:
-        ann_return = _safe((1.0 + total_ret) ** (1.0 / duration_years) - 1.0)
+        try:
+            ann_return = _safe((1.0 + total_ret) ** (1.0 / duration_years) - 1.0)
+        except OverflowError:
+            ann_return = 0.0
     else:
         ann_return = 0.0
 

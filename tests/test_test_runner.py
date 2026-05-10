@@ -293,7 +293,7 @@ def _mock_portfolio(sharpe=1.5, max_dd=0.1, total_ret=0.15, n_trades=10, win_rat
     pf.trades.count.return_value = n_trades
     # trades.records_readable with a pnl column
     trades_df = pd.DataFrame({"PnL": [10.0, -5.0, 8.0, 3.0, -2.0,
-                                       9.0,  1.0, 4.0, 6.0, -3.0]})
+                                       9.0, -1.0, 4.0, 6.0, -3.0]})
     pf.trades.records_readable = trades_df
     # returns() — a small Series of per-bar returns
     pf.returns.return_value = pd.Series([0.001, -0.0005, 0.0008, 0.0002, -0.0003])
