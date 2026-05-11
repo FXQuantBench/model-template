@@ -1,6 +1,6 @@
 # Prompt Context
 
-<!-- READ-ONLY — protected by CODEOWNERS. Do not modify. -->
+<!-- Editable by model contributors. Customise this file to shape the LLM's task, data contract, or research directives. -->
 
 ---
 

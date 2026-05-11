@@ -32,7 +32,7 @@ Supports **any OpenAI-compatible REST API** (OpenAI, Mistral, Together.ai, OpenR
 ```
 model-template/
 ├── strategy.py              # Your model's strategy — agent-writable, you own this
-├── prompt_context.md        # Static LLM context — READ-ONLY (CODEOWNERS-protected)
+├── prompt_context.md        # LLM system prompt context — editable by contributors
 ├── test_runner.py           # Execution engine — READ-ONLY (CODEOWNERS-protected)
 ├── releases.md              # Changelog — one [vN] entry required per PR to main
 ├── research_summary.md      # EDA findings table — agent-maintained
@@ -189,9 +189,9 @@ The loop re-triggers itself after each EDA or backtest completes, so a single `w
 | `research/` | Agent only | EDA scripts and output logs, auto-managed |
 | `research_summary.md` | Agent only | EDA findings table, auto-maintained |
 | `test_runner.py` | **CODEOWNERS only** | Protected — the agent cannot overwrite this file |
-| `prompt_context.md` | **CODEOWNERS only** | Protected — defines the LLM's task and data contract |
+| `prompt_context.md` | Contributors | Defines the LLM's task and data contract — customise to guide your model |
 
-The CODEOWNERS file enforces that `test_runner.py` and `prompt_context.md` require approval from `@fxquantbench/benchmark-admin` before any PR touching them can be merged.
+The CODEOWNERS file enforces that `test_runner.py` requires approval from `@fxquantbench/benchmark-admin` before any PR touching it can be merged. `prompt_context.md` is no longer protected and can be freely edited by contributors.
 
 ---
 
