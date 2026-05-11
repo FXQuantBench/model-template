@@ -2,6 +2,8 @@
 
 A self-contained benchmark harness that runs an LLM in an autonomous agentic loop to research and improve a quantitative trading strategy on GBPUSD tick data. The loop issues commands, edits `strategy.py`, runs EDA and backtests, and tracks results on the shared leaderboard.
 
+Supports **any OpenAI-compatible REST API** (OpenAI, Mistral, Together.ai, OpenRouter, Ollama, vLLM, and more), plus Anthropic and Google Gemini natively.
+
 ---
 
 ## Table of Contents
@@ -38,7 +40,7 @@ model-template/
 │   └── thoughts.md          # Agent reasoning log — required before each command
 ├── research/                # EDA scripts and output logs — agent-generated
 ├── harness/
-│   ├── providers.py         # LLM adapter implementations (OpenAI / Anthropic / Google)
+│   ├── providers.py         # LLM adapters: OpenAI-compatible (any base URL), Anthropic, Google
 │   └── call_model.py        # CLI wrapper invoked by the agentic loop workflow
 ├── tests/                   # Unit tests
 └── .github/
@@ -116,14 +118,10 @@ Set `MODEL_PROVIDER` and `MODEL_ID` to select your model. The `openai` provider 
 
 | `MODEL_PROVIDER` | `MODEL_BASE_URL` | Example `MODEL_ID` values | Notes |
 |---|---|---|---|
-| `openai` | *(unset — default)* | `gpt-4o`, `gpt-4-turbo`, `o3` | Official OpenAI API |
-| `openai` | `https://api.mistral.ai/v1` | `mistral-large-latest`, `mistral-medium` | Mistral via OpenAI-compatible API |
-| `openai` | `https://api.together.xyz/v1` | `meta-llama/Llama-3-70b-chat-hf` | Together.ai |
-| `openai` | `https://openrouter.ai/api/v1` | any OpenRouter model slug | OpenRouter |
-| `openai` | `http://localhost:11434/v1` | `llama3`, `qwen2.5` | Local Ollama instance |
-| `openai` | `http://localhost:8000/v1` | model name served by vLLM | Local vLLM server |
-| `anthropic` | *(n/a)* | `claude-3-5-sonnet-20241022`, `claude-opus-4-5` | Forced tool-use for structured output |
-| `google` | *(n/a)* | `gemini-1.5-pro`, `gemini-2.0-flash` | `response_mime_type="application/json"` |
+| `openai` | *(unset — default)* | `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` | Official OpenAI API |
+| `openai` | `https://openrouter.ai/api/v1` | `openai/gpt-5.5`, `anthropic/claude-opus-4-7`, `google/gemini-2.5-pro` | OpenRouter — access any provider via one key |
+| `anthropic` | *(n/a)* | `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5` | Forced tool-use for structured output |
+| `google` | *(n/a)* | `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` | `response_mime_type="application/json"` |
 
 > **Note:** Some OpenAI-compatible endpoints do not support the `json_schema` response format. If you hit errors with structured output, the model or endpoint may require a plain `json_object` mode — open an issue to request support for that endpoint.
 
