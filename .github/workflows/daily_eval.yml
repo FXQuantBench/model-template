@@ -40,6 +40,23 @@ jobs:
           echo "eval_date=$EVAL_DATE" >> "$GITHUB_OUTPUT"
           echo "strategy_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "Eval date: $EVAL_DATE"
+          # Compute window_start and window_end.
+          # On Tuesdays EVAL_DATE is Monday; extend window back to Sunday to
+          # capture the FX weekly open session (~21:00 UTC Sunday).
+          python3 - <<'PYEOF'
+          from datetime import date, timedelta
+          import os
+          eval_date = date.fromisoformat("$EVAL_DATE")
+          window_end = eval_date + timedelta(days=1)
+          if eval_date.weekday() == 0:  # Monday
+              window_start = eval_date - timedelta(days=1)  # Sunday
+          else:
+              window_start = eval_date
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"window_start={window_start.isoformat()}\n")
+              fh.write(f"window_end={window_end.isoformat()}\n")
+          print(f"Window: {window_start.isoformat()} → {window_end.isoformat()} (exclusive)")
+          PYEOF
 
       - name: Guard — idempotency check
         run: |
@@ -53,44 +70,49 @@ jobs:
             echo "SKIP_JOB=true" >> "$GITHUB_ENV"
           fi
 
-      - name: Confirm HF shard exists for eval_date
+      - name: Confirm HF shards exist for eval window
         if: env.SKIP_JOB != 'true'
         run: |
-          EVAL_DATE="${{ steps.date.outputs.eval_date }}"
+          WINDOW_START="${{ steps.date.outputs.window_start }}"
+          WINDOW_END="${{ steps.date.outputs.window_end }}"
           pip install --quiet duckdb
-          python3 - <<PYEOF
+          python3 - <<'PYEOF'
           import duckdb, os, sys
+          from datetime import date, timedelta
 
           hf_token = os.environ["HF_TOKEN_RO"]
-          eval_date = "$EVAL_DATE"
+          window_start = date.fromisoformat("$WINDOW_START")
+          window_end   = date.fromisoformat("$WINDOW_END")  # exclusive
 
           conn = duckdb.connect()
           conn.execute("INSTALL httpfs; LOAD httpfs;")
           conn.execute(f"SET hf_token='{hf_token}';")
 
-          # Compute millisecond bounds for the eval day
-          from datetime import datetime, timezone, timedelta
-          day_start = datetime.strptime(eval_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-          day_end   = day_start + timedelta(days=1)
-          start_ms  = int(day_start.timestamp() * 1000)
-          end_ms    = int(day_end.timestamp() * 1000)
+          missing = []
+          day = window_start
+          while day < window_end:
+              from datetime import datetime, timezone
+              day_start_ms = int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp() * 1000)
+              day_end_ms   = day_start_ms + 86_400_000
+              try:
+                  count = conn.execute(f"""
+                      SELECT COUNT(*) FROM read_parquet('hf://datasets/FXQuantBench/fx-ticks/*.parquet')
+                      WHERE pair = 'GBPUSD'
+                        AND timestamp_utc >= {day_start_ms}
+                        AND timestamp_utc <  {day_end_ms}
+                  """).fetchone()[0]
+              except Exception as e:
+                  print(f"ERROR querying HF dataset for {day}: {e}", file=sys.stderr)
+                  sys.exit(2)
+              if count == 0:
+                  missing.append(day.isoformat())
+                  print(f"MISSING: No GBPUSD rows for {day} in HF dataset.", file=sys.stderr)
+              else:
+                  print(f"OK: {count} rows for {day}.")
+              day += timedelta(days=1)
 
-          try:
-              count = conn.execute(f"""
-                  SELECT COUNT(*) FROM read_parquet('hf://datasets/FXQuantBench/fx-ticks/*.parquet')
-                  WHERE pair = 'GBPUSD'
-                    AND timestamp_utc >= {start_ms}
-                    AND timestamp_utc <  {end_ms}
-              """).fetchone()[0]
-          except Exception as e:
-              print(f"ERROR querying HF dataset: {e}", file=sys.stderr)
-              sys.exit(2)
-
-          if count == 0:
-              print(f"MISSING: No GBPUSD rows found for {eval_date} in HF dataset.", file=sys.stderr)
+          if missing:
               sys.exit(1)
-
-          print(f"OK: {count} rows found for {eval_date}.")
           PYEOF
         env:
           HF_TOKEN_RO: ${{ secrets.HF_TOKEN_RO }}
@@ -101,11 +123,12 @@ jobs:
         if: steps.shard_check.outcome == 'failure'
         run: |
           EVAL_DATE="${{ steps.date.outputs.eval_date }}"
+          WINDOW_START="${{ steps.date.outputs.window_start }}"
           gh issue create \
-            --title "Missing HF shard: ${EVAL_DATE}" \
-            --body "The daily eval workflow could not find GBPUSD tick data in \`FXQuantBench/fx-ticks\` for **${EVAL_DATE}**. The eval was skipped. Please verify the dataset and re-run once the shard is available." \
+            --title "Missing HF shard: ${EVAL_DATE} (window ${WINDOW_START}→${EVAL_DATE})" \
+            --body "The daily eval workflow could not find GBPUSD tick data in \`FXQuantBench/fx-ticks\` for one or more days in the window **${WINDOW_START} → ${EVAL_DATE}** (inclusive). The eval was skipped. Please verify the dataset and re-run once the shards are available." \
             --label "data-missing" 2>/dev/null || true
-          echo "Issue opened for missing shard ${EVAL_DATE}. Exiting."
+          echo "Issue opened for missing shard(s) in window ${WINDOW_START}→${EVAL_DATE}. Exiting."
           exit 1
 
       - name: Run eval container
@@ -119,8 +142,8 @@ jobs:
             --rm \
             -e MODE=eval \
             -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
-            -e START_DATE="${EVAL_DATE}" \
-            -e END_DATE="${EVAL_DATE}" \
+            -e START_DATE="${{ steps.date.outputs.window_start }}" \
+            -e END_DATE="${{ steps.date.outputs.window_end }}" \
             -e RUN_ID="${EVAL_DATE}" \
             -e MODEL_ID="${{ vars.MODEL_ID }}" \
             -e OUTPUT_DIR="/output" \
