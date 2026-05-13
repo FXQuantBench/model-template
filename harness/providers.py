@@ -16,7 +16,53 @@ Raises ValueError(raw_response) if the provider returns a malformed or empty res
 from __future__ import annotations
 
 import json
+import random
+import time
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Retry / backoff helper
+# ---------------------------------------------------------------------------
+
+_RETRY_TIMEOUT_SECONDS = 120
+_RETRY_BASE_DELAY = 1.0   # seconds
+_RETRY_MAX_DELAY = 30.0   # seconds
+
+
+def _call_with_backoff(fn, *args, **kwargs):
+    """Call *fn* with exponential backoff until it succeeds or 120 s have elapsed.
+
+    Retries on transient HTTP errors (rate-limits, server errors). Any other
+    exception propagates immediately.
+    """
+    deadline = time.monotonic() + _RETRY_TIMEOUT_SECONDS
+    delay = _RETRY_BASE_DELAY
+    attempt = 0
+    while True:
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            # Classify as retryable based on exception type / message
+            exc_str = str(exc).lower()
+            retryable = any(
+                token in exc_str
+                for token in ("429", "rate limit", "rate_limit", "529",
+                              "overloaded", "503", "502", "500",
+                              "server error", "timeout", "timed out")
+            )
+            if not retryable:
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"API call did not succeed within {_RETRY_TIMEOUT_SECONDS}s "
+                    f"after {attempt + 1} attempt(s). Last error: {exc}"
+                ) from exc
+            sleep_for = min(delay, remaining)
+            jitter = random.uniform(0, sleep_for * 0.2)
+            time.sleep(sleep_for + jitter)
+            delay = min(delay * 2, _RETRY_MAX_DELAY)
+            attempt += 1
 
 # ---------------------------------------------------------------------------
 # JSON Schema shared across all providers
@@ -91,7 +137,8 @@ def openai_compatible(
 
     base_url = os.environ.get("MODEL_BASE_URL", "").strip() or None
     client = openai.OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
+    response = _call_with_backoff(
+        client.chat.completions.create,
         model=model_id,
         response_format={
             "type": "json_schema",
@@ -140,7 +187,8 @@ def anthropic_adapter(
     import anthropic  # noqa: PLC0415
 
     client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
+    response = _call_with_backoff(
+        client.messages.create,
         model=model_id,
         max_tokens=8192,
         system=system_prompt,
@@ -189,7 +237,7 @@ def google_adapter(
         generation_config=generation_config,
     )
 
-    response = model.generate_content(user_message)
+    response = _call_with_backoff(model.generate_content, user_message)
 
     raw = response.text if hasattr(response, "text") else ""
     if not raw:
