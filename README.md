@@ -121,7 +121,7 @@ Set `MODEL_PROVIDER` and `MODEL_ID` to select your model. The `openai` provider 
 | `openai` | *(unset — default)* | `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` | Official OpenAI API |
 | `openai` | `https://openrouter.ai/api/v1` | `openai/gpt-5.5`, `anthropic/claude-opus-4-7`, `google/gemini-2.5-pro` | OpenRouter — access any provider via one key |
 | `anthropic` | *(n/a)* | `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5` | Forced tool-use for structured output |
-| `google` | *(n/a)* | `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` | `response_mime_type="application/json"` |
+| `google` | *(n/a)* | `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3.1-pro-preview` | `response_mime_type="application/json"` |
 
 > **Note:** Some OpenAI-compatible endpoints do not support the `json_schema` response format. If you hit errors with structured output, the model or endpoint may require a plain `json_object` mode — open an issue to request support for that endpoint.
 
