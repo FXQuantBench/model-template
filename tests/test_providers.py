@@ -1,8 +1,12 @@
 """tests/test_providers.py — unit tests for harness/providers.py.
 
-All three provider libraries (openai, anthropic, google-generativeai) are
+All three provider libraries (openai, anthropic, google-genai) are
 mocked via sys.modules so the tests run without any installed packages or
 API credentials.
+
+NOTE: mocks bypass the real import — keep requirements.txt in sync with
+the package names used in providers.py or a real import will silently
+break in CI without a test failure here.
 """
 
 import json
@@ -252,3 +256,30 @@ class TestAdaptersRegistry:
         from harness.providers import ADAPTERS
         for name, fn in ADAPTERS.items():
             assert callable(fn), f"ADAPTERS['{name}'] is not callable"
+
+
+# ---------------------------------------------------------------------------
+# Package-name smoke tests — catch requirements.txt / import drift early.
+# These tests require the real packages to be installed (they are in CI via
+# requirements.txt).  Skip gracefully when running offline without packages.
+# ---------------------------------------------------------------------------
+
+class TestPackageImports:
+    """Verify that the package names in requirements.txt actually provide the
+    modules that providers.py imports.  Mocking bypasses this check, so we
+    need at least one real import assertion."""
+
+    def _require(self, *import_path: str):
+        import importlib
+        for dotted in import_path:
+            importlib.import_module(dotted)
+
+    def test_openai_importable(self):
+        self._require("openai")
+
+    def test_anthropic_importable(self):
+        self._require("anthropic")
+
+    def test_google_genai_importable(self):
+        """google-genai must expose `google.genai`, not `google.generativeai`."""
+        self._require("google.genai", "google.genai.types")

@@ -147,7 +147,7 @@ jobs:
 
       - name: Install provider libraries
         if: env.SKIP_JOB != 'true'
-        run: pip install --quiet openai anthropic google-generativeai
+        run: pip install --quiet -r requirements.txt
 
       - name: Call model
         if: env.SKIP_JOB != 'true'
