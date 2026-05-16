@@ -148,7 +148,7 @@ If the run fails, the most common causes are:
 - `MODEL_PROVIDER` or `MODEL_ID` variable is missing
 - `MODEL_API_KEY` secret is not set or is set under a different name (must be exactly `MODEL_API_KEY`)
 - `MODEL_BASE_URL` points to an endpoint that does not support `json_schema` response format
-- `BENCHMARK_BOT_TOKEN` or `HF_TOKEN_RO` were not inherited from the org (check **Settings → Secrets** — they should appear as org secrets, not repo secrets)
+- `BENCHMARK_BOT_TOKEN` or `HF_TOKEN_RO` were not inherited from the org — backtest and eval run via reusable workflows that use org secrets from `fxquantbench/model-template` directly
 
 ---
 
