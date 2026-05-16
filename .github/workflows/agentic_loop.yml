@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   loop:
@@ -204,6 +205,8 @@ jobs:
 
       - name: Process first valid command
         if: env.SKIP_JOB != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PYEOF'
           import json, os, subprocess, sys
