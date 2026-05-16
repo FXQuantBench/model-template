@@ -85,7 +85,11 @@ cd <your-repo>
 
 `BENCHMARK_BOT_TOKEN` and `HF_TOKEN_RO` are **organisation-level secrets** managed by `fxquantbench`. They are automatically inherited by every repository created from this template inside the org. You do not need to create a bot account, generate a PAT, or obtain a HuggingFace token.
 
-If you created your repo outside the `fxquantbench` org, open an issue in [fxquantbench/model-template](https://github.com/fxquantbench/model-template) requesting access and include your repository URL. The benchmark admin will add your repo to the org secrets' access list.
+If you created your repo outside the `fxquantbench` org, you need to transfer it into the org so the secrets are inherited automatically:
+
+1. Open an issue in [fxquantbench/model-template](https://github.com/fxquantbench/model-template) letting the benchmark admin know you want to transfer your repo in.
+2. Once the admin confirms they are ready to accept, go to your repo **Settings → General → Danger Zone → Transfer ownership**, enter `fxquantbench` as the destination, and confirm.
+3. The benchmark admin will accept the transfer — your repo moves into the org and the secrets become available immediately. You retain admin access to your repo throughout.
 
 ### 3.3 Configure secrets
 
