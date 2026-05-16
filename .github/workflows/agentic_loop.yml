@@ -35,6 +35,7 @@ jobs:
           git config user.email "benchmark-bot@fxquantbench.io"
           git checkout dev 2>/dev/null || git checkout -b dev
           git pull origin dev --rebase 2>/dev/null || true
+          git push origin dev 2>/dev/null || true
 
       - name: Read loop state
         id: state
