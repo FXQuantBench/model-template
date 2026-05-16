@@ -15,9 +15,9 @@ Supports **any OpenAI-compatible REST API** (OpenAI, Mistral, Together.ai, OpenR
    - [3.2 Create a bot account and PAT](#32-create-a-bot-account-and-pat)
    - [3.3 Configure secrets](#33-configure-secrets)
    - [3.4 Configure variables](#34-configure-variables)
-   - [3.5 Choose a provider and model](#35-choose-a-provider-and-model)
-   - [3.6 Set the in-sample date window](#36-set-the-in-sample-date-window)
-   - [3.7 Verify the setup](#37-verify-the-setup)
+     - [3.4.1 Choose a provider and model](#341-choose-a-provider-and-model)
+     - [3.4.2 Set the in-sample date window](#342-set-the-in-sample-date-window)
+   - [3.5 Verify the setup](#35-verify-the-setup)
 4. [How the agentic loop works](#4-how-the-agentic-loop-works)
 5. [File ownership and protected files](#5-file-ownership-and-protected-files)
 6. [strategy.py contract](#6-strategypy-contract)
@@ -60,9 +60,9 @@ model-template/
 | Requirement | Notes |
 |---|---|
 | GitHub account | Must have permission to fork the `fxquantbench/model-template` repo |
-| `BENCHMARK_BOT_TOKEN` | **Provided automatically** — this is an org-level secret on `fxquantbench`; no action required |
+| `BENCHMARK_BOT_TOKEN` | **Provided automatically** — org-level secret on `fxquantbench`; no action required |
+| `HF_TOKEN_RO` | **Provided automatically** — org-level secret on `fxquantbench`; no action required |
 | LLM API key | Any OpenAI-compatible endpoint, Anthropic, or Google — one is enough |
-| HuggingFace token | Read-only token for `FXQuantBench/fx-ticks` dataset |
 
 No local tooling is required to run the benchmark — everything executes in GitHub Actions. A local Python ≥ 3.11 environment (or `uv`) is only needed to run tests and iterate on `strategy.py` before letting the agent take over.
 
@@ -81,11 +81,11 @@ git clone https://github.com/<your-org>/<your-repo>.git
 cd <your-repo>
 ```
 
-### 3.2 Bot token (org secret — no action required)
+### 3.2 Org secrets (no action required)
 
-`BENCHMARK_BOT_TOKEN` is an **organisation-level secret** managed by `fxquantbench`. It is automatically inherited by every repository created from this template inside the org. You do not need to create a bot account or generate a PAT.
+`BENCHMARK_BOT_TOKEN` and `HF_TOKEN_RO` are **organisation-level secrets** managed by `fxquantbench`. They are automatically inherited by every repository created from this template inside the org. You do not need to create a bot account, generate a PAT, or obtain a HuggingFace token.
 
-If you are forking outside the `fxquantbench` org, contact the benchmark admin to have your repo added to the secret's access list.
+If you created your repo outside the `fxquantbench` org, open an issue in [fxquantbench/model-template](https://github.com/fxquantbench/model-template) requesting access and include your repository URL. The benchmark admin will add your repo to the org secrets' access list.
 
 ### 3.3 Configure secrets
 
@@ -94,9 +94,8 @@ Go to **Settings → Secrets and variables → Actions → Secrets** in your rep
 | Secret name | Value |
 |---|---|
 | `MODEL_API_KEY` | Your LLM provider API key |
-| `HF_TOKEN_RO` | HuggingFace read-only token for the tick dataset |
 
-`BENCHMARK_BOT_TOKEN` is inherited from the org — do not add it manually.
+`BENCHMARK_BOT_TOKEN` and `HF_TOKEN_RO` are inherited from the org — do not add them manually.
 
 ### 3.4 Configure variables
 
@@ -112,7 +111,7 @@ Go to **Settings → Secrets and variables → Actions → Variables** and add:
 | `MAX_DAILY_ITERATIONS` | No | Max agentic loop runs per day (default: `6`) | `6` |
 | `EDA_ARCHIVE_THRESHOLD` | No | Archive oldest EDA files when count exceeds this (default: `30`) | `30` |
 
-### 3.5 Choose a provider and model
+#### 3.4.1 Choose a provider and model
 
 Set `MODEL_PROVIDER` and `MODEL_ID` to select your model. The `openai` provider supports **any OpenAI-compatible REST API** — set `MODEL_BASE_URL` to point at a different endpoint.
 
@@ -127,13 +126,13 @@ Set `MODEL_PROVIDER` and `MODEL_ID` to select your model. The `openai` provider 
 
 The model receives the full `prompt_context.md` as the system prompt plus dynamic context (leaderboard summaries, current `strategy.py`, recent thoughts) as the user message.
 
-### 3.6 Set the in-sample date window
+#### 3.4.2 Set the in-sample date window
 
 `IN_SAMPLE_START` and `IN_SAMPLE_END` define the GBPUSD tick data window the model is allowed to train on. The runner enforces a strict `[start, end)` window — no data outside this range is accessible during EDA or backtest.
 
 Choose dates that leave at least 6 months of unseen data for out-of-sample evaluation. The daily eval job tests `strategy.py` on yesterday's ticks (always outside the in-sample window).
 
-### 3.7 Verify the setup
+### 3.5 Verify the setup
 
 Trigger the agentic loop manually to confirm everything is wired up:
 
@@ -145,7 +144,7 @@ If the run fails, the most common causes are:
 - `MODEL_PROVIDER` or `MODEL_ID` variable is missing
 - `MODEL_API_KEY` secret is not set or is set under a different name (must be exactly `MODEL_API_KEY`)
 - `MODEL_BASE_URL` points to an endpoint that does not support `json_schema` response format
-- `BENCHMARK_BOT_TOKEN` was not inherited from the org (check **Settings → Secrets** — it should appear as an org secret, not a repo secret)
+- `BENCHMARK_BOT_TOKEN` or `HF_TOKEN_RO` were not inherited from the org (check **Settings → Secrets** — they should appear as org secrets, not repo secrets)
 
 ---
 
