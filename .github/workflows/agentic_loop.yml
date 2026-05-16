@@ -204,6 +204,14 @@ jobs:
               print(f"Skipped protected files: {skipped}", file=sys.stderr)
           PYEOF
 
+      - name: Commit all changes
+        if: env.SKIP_JOB != 'true'
+        run: |
+          git add -A
+          git diff --cached --quiet && echo "No changes to commit." || \
+            git commit -m "chore: agentic loop iteration [skip ci]"
+          git push origin dev
+
       - name: Process first valid command
         if: env.SKIP_JOB != 'true'
         env:
@@ -268,14 +276,6 @@ jobs:
           else:
               print("No valid command found in response.")
           PYEOF
-
-      - name: Commit all changes
-        if: env.SKIP_JOB != 'true'
-        run: |
-          git add -A
-          git diff --cached --quiet && echo "No changes to commit." || \
-            git commit -m "chore: agentic loop iteration [skip ci]"
-          git push origin dev
 
       - name: Update loop_state.json
         if: env.SKIP_JOB != 'true'
