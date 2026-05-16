@@ -212,6 +212,32 @@ def anthropic_adapter(
 
 
 # ---------------------------------------------------------------------------
+# Schema helpers
+# ---------------------------------------------------------------------------
+
+def _strip_additional_properties(schema: dict) -> dict:
+    """Return a deep copy of *schema* with all 'additionalProperties' keys removed.
+
+    Gemini rejects this field; OpenAI and Anthropic handle it fine as-is.
+    """
+    import copy  # noqa: PLC0415
+
+    out = copy.deepcopy(schema)
+
+    def _strip(obj: Any) -> None:
+        if isinstance(obj, dict):
+            obj.pop("additionalProperties", None)
+            for v in obj.values():
+                _strip(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _strip(item)
+
+    _strip(out)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Adapter: Google Gemini
 # ---------------------------------------------------------------------------
 
@@ -222,22 +248,21 @@ def google_adapter(
     user_message: str,
 ) -> dict:
     """Use response_mime_type + response_schema for structured JSON output."""
-    import google.generativeai as genai  # noqa: PLC0415
+    from google import genai  # noqa: PLC0415
+    from google.genai import types  # noqa: PLC0415
 
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
-    generation_config = genai.GenerationConfig(
-        response_mime_type="application/json",
-        response_schema=_RESPONSE_SCHEMA,
+    response = _call_with_backoff(
+        client.models.generate_content,
+        model=model_id,
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            response_mime_type="application/json",
+            response_schema=_strip_additional_properties(_RESPONSE_SCHEMA),
+        ),
     )
-
-    model = genai.GenerativeModel(
-        model_name=model_id,
-        system_instruction=system_prompt,
-        generation_config=generation_config,
-    )
-
-    response = _call_with_backoff(model.generate_content, user_message)
 
     raw = response.text if hasattr(response, "text") else ""
     if not raw:
