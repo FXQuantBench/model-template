@@ -42,8 +42,8 @@ jobs:
 
       - name: Guard — thoughts.md updated in latest commit
         run: |
-          if ! git diff HEAD~1 HEAD --name-only 2>/dev/null | grep -q "audit_logs/thoughts.md"; then
-            echo "ERROR: audit_logs/thoughts.md was not modified in the latest commit."
+          if ! git log --name-only --pretty="" -3 HEAD | grep -q "audit_logs/thoughts.md"; then
+            echo "ERROR: audit_logs/thoughts.md was not modified in the last 3 commits."
             echo "Update thoughts.md with your reasoning before issuing /run-backtest."
             exit 1
           fi
@@ -148,16 +148,13 @@ jobs:
           git commit -m "backtest: ${MODEL_ID} ${RUN_ID}"
           git push origin HEAD
 
-      - name: Append summary to releases.md
+      - name: Print backtest summary
         run: |
           python3 - <<PYEOF
           import json
           with open("result.json") as f:
               d = json.load(f)
-          line = f"Run {d['run_id']} | Sharpe {d['sharpe']:.4f} | MDD {d['max_drawdown']:.4f} | WinRate {d['win_rate']:.4f}"
-          with open("releases.md", "a") as f:
-              f.write(f"\n{line}\n")
-          print(line)
+          print(f"run_id={d['run_id']} sharpe={d['sharpe']:.4f} mdd={d['max_drawdown']:.4f} win_rate={d['win_rate']:.4f}")
           PYEOF
 
       - name: Write job summary

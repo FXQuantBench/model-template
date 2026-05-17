@@ -48,7 +48,7 @@ jobs:
           # Compute window_start and window_end.
           # On Tuesdays EVAL_DATE is Monday; extend window back to Sunday to
           # capture the FX weekly open session (~21:00 UTC Sunday).
-          python3 - <<'PYEOF'
+          python3 - <<PYEOF
           from datetime import date, timedelta
           import os
           eval_date = date.fromisoformat("$EVAL_DATE")
@@ -85,7 +85,7 @@ jobs:
           WINDOW_START="${{ steps.date.outputs.window_start }}"
           WINDOW_END="${{ steps.date.outputs.window_end }}"
           pip install --quiet duckdb
-          python3 - <<'PYEOF'
+          python3 - <<PYEOF
           import duckdb, os, sys
           from datetime import date, timedelta
 
@@ -143,6 +143,10 @@ jobs:
           curl -fsSL \
             https://raw.githubusercontent.com/fxquantbench/model-template/main/test_runner.py \
             -o test_runner.py
+
+      - name: Log in to GHCR
+        if: env.SKIP_JOB != 'true'
+        run: echo "${{ secrets.BENCHMARK_BOT_TOKEN }}" | docker login ghcr.io -u benchmark-bot --password-stdin
 
       - name: Run eval container
         if: env.SKIP_JOB != 'true'

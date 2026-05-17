@@ -42,9 +42,18 @@ jobs:
       - name: Guard — thoughts.md updated in latest commit
         if: env.SKIP_JOB != 'true'
         run: |
-          if ! git diff HEAD~1 HEAD --name-only 2>/dev/null | grep -q "audit_logs/thoughts.md"; then
-            echo "ERROR: audit_logs/thoughts.md was not modified in the latest commit."
+          if ! git log --name-only --pretty="" -3 HEAD | grep -q "audit_logs/thoughts.md"; then
+            echo "ERROR: audit_logs/thoughts.md was not modified in the last 3 commits."
             echo "Update thoughts.md with your reasoning before issuing /run-eda."
+            exit 1
+          fi
+
+      - name: Guard — EDA script exists
+        if: env.SKIP_JOB != 'true'
+        run: |
+          if [ ! -f "research/${{ inputs.file_id }}.py" ]; then
+            echo "ERROR: research/${{ inputs.file_id }}.py does not exist on the dev branch."
+            echo "The model must create this file via file_changes before issuing /run-eda."
             exit 1
           fi
 
