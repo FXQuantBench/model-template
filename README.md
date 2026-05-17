@@ -47,8 +47,8 @@ model-template/
     ├── loop_state.json       # Agentic loop counters (last_run, daily_count)
     └── workflows/
         ├── agentic_loop.yml  # Core loop — triggers after EDA or backtest completes
-        ├── run_eda.yml       # Runs a research/<file_id>.py EDA script in Docker
-        ├── run_backtest.yml  # Runs a full vectorbt backtest in Docker
+        ├── run_eda.yml       # Dispatches EDA into the infra-managed strategy-runner image
+        ├── run_backtest.yml  # Dispatches a full vectorbt backtest into the infra-managed strategy-runner image
         ├── pr_guard.yml      # Enforces quality gates on PRs to main
         └── daily_eval.yml    # Out-of-sample eval, runs Tue–Sat at 08:30 UTC
 ```
@@ -112,6 +112,7 @@ Go to **Settings → Secrets and variables → Actions → Variables** and add:
 | `IN_SAMPLE_START` | Yes | Inclusive start of the training window (`YYYY-MM-DD`) | `2022-01-03` |
 | `IN_SAMPLE_END` | Yes | Exclusive end of the training window (`YYYY-MM-DD`) | `2024-01-01` |
 | `MODEL_BASE_URL` | No | Override the API base URL for `openai` provider (any OpenAI-compatible endpoint) | `https://api.mistral.ai/v1` |
+| `STRATEGY_RUNNER_IMAGE` | No | Override the infra-managed runner image reference used by EDA, backtest, and eval workflows | `ghcr.io/fxquantbench/strategy-runner:2026-05-10` |
 | `MAX_DAILY_ITERATIONS` | No | Max agentic loop runs per day (default: `6`) | `6` |
 | `EDA_ARCHIVE_THRESHOLD` | No | Archive oldest EDA files when count exceeds this (default: `30`) | `30` |
 
@@ -136,6 +137,8 @@ The model receives the full `prompt_context.md` as the system prompt plus dynami
 
 Choose dates that leave at least 6 months of unseen data for out-of-sample evaluation. The daily eval job tests `strategy.py` on yesterday's ticks (always outside the in-sample window).
 
+`STRATEGY_RUNNER_IMAGE` defaults to `ghcr.io/fxquantbench/strategy-runner:latest`, which is built and published from `FXQuantBench/infra`. Set it to a versioned tag or digest if you want to pin the execution runtime across workflow runs.
+
 ### 3.5 Verify the setup
 
 Trigger the agentic loop manually to confirm everything is wired up:
@@ -148,6 +151,7 @@ If the run fails, the most common causes are:
 - `MODEL_PROVIDER` or `MODEL_ID` variable is missing
 - `MODEL_API_KEY` secret is not set or is set under a different name (must be exactly `MODEL_API_KEY`)
 - `MODEL_BASE_URL` points to an endpoint that does not support `json_schema` response format
+- `STRATEGY_RUNNER_IMAGE` points at a tag that does not exist or that `BENCHMARK_BOT_TOKEN` cannot read from GHCR
 - `BENCHMARK_BOT_TOKEN` or `HF_TOKEN_RO` were not inherited from the org — backtest and eval run via reusable workflows that use org secrets from `fxquantbench/model-template` directly
 
 ---
@@ -229,7 +233,9 @@ The GBPUSD view has these columns: `timestamp_utc` (int64 ms), `bid` (float), `a
 
 ## 7. Running a backtest manually
 
-The `run_backtest.yml` workflow runs `strategy.py` inside a sandboxed Docker container, writes `result.json`, and commits it to the leaderboard.
+The `run_backtest.yml` workflow runs `strategy.py` inside the infra-managed `strategy-runner` container image published from `FXQuantBench/infra`, writes `result.json`, and commits it to the leaderboard.
+
+By default the workflows pull `ghcr.io/fxquantbench/strategy-runner:latest`. If you set `STRATEGY_RUNNER_IMAGE`, the EDA, backtest, and daily eval workflows use that image reference instead. This is the preferred way to pin the benchmark runtime to a versioned image tag or digest.
 
 **Requirements before triggering:**
 - The latest commit on `dev` must include an update to `audit_logs/thoughts.md`.
@@ -237,7 +243,7 @@ The `run_backtest.yml` workflow runs `strategy.py` inside a sandboxed Docker con
 
 **To trigger:**
 1. Go to **Actions → Run Backtest → Run workflow** (select the `dev` branch).
-2. The workflow runs the container, validates the result against `ResultSchema`, and pushes `result.json` to the leaderboard under `<MODEL_ID>/results/backtest/<YYYY-MM-DD>-<short-sha>.json`.
+2. The workflow pulls the configured runner image from GHCR, validates the result against `ResultSchema`, and pushes `result.json` to the leaderboard under `<MODEL_ID>/results/backtest/<YYYY-MM-DD>-<short-sha>.json`.
 3. A summary table with all 17 metrics is posted to the job summary.
 
 **Result fields:**

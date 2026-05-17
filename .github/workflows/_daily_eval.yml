@@ -15,15 +15,23 @@ on:
         required: false
         type: string
         default: ""
+      runner_image:
+        description: "Infra-managed strategy runner image reference"
+        required: false
+        type: string
+        default: "ghcr.io/fxquantbench/strategy-runner:latest"
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   eval:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+      RUNNER_IMAGE: ${{ inputs.runner_image }}
+      SKIP_JOB: 'false'
 
     steps:
       - name: Checkout fork main branch
@@ -146,12 +154,25 @@ jobs:
 
       - name: Log in to GHCR
         if: env.SKIP_JOB != 'true'
-        run: echo "${{ secrets.BENCHMARK_BOT_TOKEN }}" | docker login ghcr.io -u benchmark-bot --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: benchmark-bot
+          password: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+
+      - name: Pull strategy runner image
+        if: env.SKIP_JOB != 'true'
+        run: |
+          if ! docker pull "$RUNNER_IMAGE"; then
+            echo "ERROR: Unable to pull $RUNNER_IMAGE."
+            echo "The strategy-runner image is published from FXQuantBench/infra."
+            echo "Verify the infra build_docker workflow completed successfully and that BENCHMARK_BOT_TOKEN can read the package."
+            exit 1
+          fi
 
       - name: Run eval container
         if: env.SKIP_JOB != 'true'
         run: |
-          EVAL_DATE="${{ steps.date.outputs.eval_date }}"
           mkdir -p "$RUNNER_TEMP/eval_output"
           docker run \
             --memory=4g \
@@ -161,13 +182,13 @@ jobs:
             -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
             -e START_DATE="${{ steps.date.outputs.window_start }}" \
             -e END_DATE="${{ steps.date.outputs.window_end }}" \
-            -e RUN_ID="${EVAL_DATE}" \
+            -e RUN_ID="${{ steps.date.outputs.eval_date }}" \
             -e MODEL_ID="${{ inputs.model_id }}" \
             -e OUTPUT_DIR="/output" \
             -e STRATEGY_SHA="${{ steps.date.outputs.strategy_sha }}" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
             -v "$RUNNER_TEMP/eval_output:/output" \
-            ghcr.io/fxquantbench/strategy-runner:latest
+            "$RUNNER_IMAGE"
           cp "$RUNNER_TEMP/eval_output/result.json" "$GITHUB_WORKSPACE/result.json"
 
       - name: Ensure strategy_sha is set in result.json

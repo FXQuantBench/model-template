@@ -21,4 +21,5 @@ jobs:
       repo: ${{ github.repository }}
       model_id: ${{ vars.MODEL_ID }}
       eval_date: ${{ inputs.eval_date || '' }}
+      runner_image: ${{ vars.STRATEGY_RUNNER_IMAGE || 'ghcr.io/fxquantbench/strategy-runner:latest' }}
 

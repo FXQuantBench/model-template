@@ -16,15 +16,22 @@ on:
       in_sample_end:
         required: true
         type: string
+      runner_image:
+        description: "Infra-managed strategy runner image reference"
+        required: false
+        type: string
+        default: "ghcr.io/fxquantbench/strategy-runner:latest"
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   backtest:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+      RUNNER_IMAGE: ${{ inputs.runner_image }}
 
     steps:
       - name: Checkout fork dev branch
@@ -62,7 +69,20 @@ jobs:
             -o test_runner.py
 
       - name: Log in to GHCR
-        run: echo "${{ secrets.BENCHMARK_BOT_TOKEN }}" | docker login ghcr.io -u benchmark-bot --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: benchmark-bot
+          password: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+
+      - name: Pull strategy runner image
+        run: |
+          if ! docker pull "$RUNNER_IMAGE"; then
+            echo "ERROR: Unable to pull $RUNNER_IMAGE."
+            echo "The strategy-runner image is published from FXQuantBench/infra."
+            echo "Verify the infra build_docker workflow completed successfully and that BENCHMARK_BOT_TOKEN can read the package."
+            exit 1
+          fi
 
       - name: Run backtest container
         run: |
@@ -81,7 +101,7 @@ jobs:
             -e STRATEGY_SHA="${{ steps.run_id.outputs.strategy_sha }}" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
             -v "$RUNNER_TEMP/backtest_output:/output" \
-            ghcr.io/fxquantbench/strategy-runner:latest
+            "$RUNNER_IMAGE"
           cp "$RUNNER_TEMP/backtest_output/result.json" "$GITHUB_WORKSPACE/result.json"
 
       - name: Validate result.json
