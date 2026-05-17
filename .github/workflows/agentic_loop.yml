@@ -207,6 +207,13 @@ jobs:
       - name: Commit all changes
         if: env.SKIP_JOB != 'true'
         run: |
+          NOW=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())")
+          NEW_COUNT=$(( ADJUSTED_COUNT + 1 ))
+          python3 -c "
+          import json
+          state = {'last_run': '$NOW', 'daily_count': $NEW_COUNT, 'count_date': '$TODAY'}
+          print(json.dumps(state, indent=2))
+          " > .github/loop_state.json
           git add -A
           git diff --cached --quiet && echo "No changes to commit." || \
             git commit -m "chore: agentic loop iteration [skip ci]"
@@ -276,17 +283,3 @@ jobs:
           else:
               print("No valid command found in response.")
           PYEOF
-
-      - name: Update loop_state.json
-        if: env.SKIP_JOB != 'true'
-        run: |
-          NOW=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())")
-          NEW_COUNT=$(( ADJUSTED_COUNT + 1 ))
-          python3 -c "
-          import json
-          state = {'last_run': '$NOW', 'daily_count': $NEW_COUNT, 'count_date': '$TODAY'}
-          print(json.dumps(state, indent=2))
-          " > .github/loop_state.json
-          git add .github/loop_state.json
-          git commit -m "chore: update loop state"
-          git push origin dev
