@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   eda:
@@ -46,6 +47,10 @@ jobs:
             echo "Update thoughts.md with your reasoning before issuing /run-eda."
             exit 1
           fi
+
+      - name: Log in to GHCR
+        if: env.SKIP_JOB != 'true'
+        run: echo "${{ secrets.BENCHMARK_BOT_TOKEN }}" | docker login ghcr.io -u benchmark-bot --password-stdin
 
       - name: Run EDA container
         if: env.SKIP_JOB != 'true'

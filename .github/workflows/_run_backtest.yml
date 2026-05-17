@@ -61,6 +61,9 @@ jobs:
             https://raw.githubusercontent.com/fxquantbench/model-template/main/test_runner.py \
             -o test_runner.py
 
+      - name: Log in to GHCR
+        run: echo "${{ secrets.BENCHMARK_BOT_TOKEN }}" | docker login ghcr.io -u benchmark-bot --password-stdin
+
       - name: Run backtest container
         run: |
           mkdir -p "$RUNNER_TEMP/backtest_output"
