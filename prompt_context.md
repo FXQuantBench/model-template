@@ -99,7 +99,7 @@ You must respond with a single JSON object and nothing else:
 
 | Command | Effect |
 |---|---|
-| `/run-eda <file_id>` | Run `research/<file_id>.py` in the EDA container; result written to `research/<file_id>.log` |
+| `/run-eda <file_id>` | Run `research/<file_id>.py` in the EDA container; result written to `research/<file_id>.log`. **`<file_id>` must be the exact filename stem of the script you created** — e.g. if you wrote `research/001_initial_eda.py`, use `/run-eda 001_initial_eda`. |
 | `/run-backtest` | Run `strategy.py` through the full backtest container; result committed to leaderboard |
 | `/submit-pr` | Open a pull request from `dev` to `main` for benchmark-admin review |
 
