@@ -121,7 +121,14 @@ jobs:
             -e STRATEGY_SHA="${{ steps.run_id.outputs.strategy_sha }}" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
             -v "$RUNNER_TEMP/backtest_output:/output" \
-            "$RUNNER_IMAGE"
+            "$RUNNER_IMAGE" \
+            python /sandbox/test_runner.py
+
+          if [ ! -f "$RUNNER_TEMP/backtest_output/result.json" ]; then
+            echo "ERROR: backtest runner completed without writing /output/result.json."
+            exit 1
+          fi
+
           cp "$RUNNER_TEMP/backtest_output/result.json" "$GITHUB_WORKSPACE/result.json"
 
       - name: Validate result.json

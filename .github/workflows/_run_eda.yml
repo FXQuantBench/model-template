@@ -128,7 +128,13 @@ jobs:
             -e EDA_OUTPUT="/output/eda.log" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
             -v "$RUNNER_TEMP/eda_output:/output" \
-            "$RUNNER_IMAGE"
+            "$RUNNER_IMAGE" \
+            python /sandbox/test_runner.py
+
+          if [ ! -f "$RUNNER_TEMP/eda_output/eda.log" ]; then
+            echo "ERROR: EDA runner completed without writing /output/eda.log."
+            exit 1
+          fi
 
       - name: Truncate log to 5 MB
         if: env.SKIP_JOB != 'true'
