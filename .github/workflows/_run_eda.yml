@@ -125,6 +125,7 @@ jobs:
         if: env.SKIP_JOB != 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/eda_output"
+          chmod 0777 "$RUNNER_TEMP/eda_output"
           docker run \
             --memory=4g \
             --cpus=2 \

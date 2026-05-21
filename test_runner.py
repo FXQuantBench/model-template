@@ -134,7 +134,11 @@ def _build_connection(hf_token: str) -> duckdb.DuckDBPyConnection:
     conn.execute(f"SET s3_access_key_id='user';")
     conn.execute(f"SET s3_secret_access_key='{hf_token}';")
     conn.execute(f"SET s3_session_token='';")
-    conn.execute(f"SET hf_token='{hf_token}';")
+    try:
+        conn.execute(f"SET hf_token='{hf_token}';")
+    except duckdb.Error as exc:
+        if 'unrecognized configuration parameter "hf_token"' not in str(exc):
+            raise
     return conn
 
 
@@ -189,6 +193,24 @@ def _partial_timeout_result(run_id: str, mode: str, model_id: str,
         "timed_out": True,
     }
     _write_result(payload)
+
+
+def _write_eda_failure_log(message: str) -> None:
+    eda_output = Path(os.environ.get("EDA_OUTPUT", "/output/eda.log"))
+    eda_output.parent.mkdir(parents=True, exist_ok=True)
+    eda_output.write_text(message)
+
+
+def _handle_failure(run_id: str, mode: str, model_id: str,
+                    strategy_sha: str, start_date: str, end_date: str,
+                    t_start: float, error_text: str | None = None) -> None:
+    if mode == "eda":
+        message = error_text or f"ERROR: EDA runner failed after {round(time.time() - t_start, 3)}s.\n"
+        _write_eda_failure_log(message)
+        return
+
+    _partial_timeout_result(run_id, mode, model_id, strategy_sha,
+                            start_date, end_date, t_start)
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +431,9 @@ def main() -> None:
 
     # --- Timeout handler ---
     def _on_timeout(signum, frame):  # noqa: ARG001
-        _partial_timeout_result(run_id, mode, model_id, strategy_sha,
-                                start_date, end_date, t_start)
+        _handle_failure(run_id, mode, model_id, strategy_sha,
+                        start_date, end_date, t_start,
+                        f"ERROR: {mode} runner timed out after {TIMEOUT_SECONDS}s.\n")
         sys.exit(1)
 
     signal.signal(signal.SIGALRM, _on_timeout)
@@ -435,9 +458,10 @@ def main() -> None:
             raise ValueError(f"Unknown MODE: {mode!r}")
 
     except Exception:  # noqa: BLE001
-        traceback.print_exc()
-        _partial_timeout_result(run_id, mode, model_id, strategy_sha,
-                                start_date, end_date, t_start)
+        error_text = traceback.format_exc()
+        print(error_text, file=sys.stderr, end="")
+        _handle_failure(run_id, mode, model_id, strategy_sha,
+                        start_date, end_date, t_start, error_text)
         sys.exit(1)
     finally:
         signal.alarm(0)
