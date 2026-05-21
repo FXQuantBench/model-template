@@ -10,7 +10,9 @@ on:
         required: false
         type: string
 
-permissions: {}
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   eval:

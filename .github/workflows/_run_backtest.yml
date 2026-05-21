@@ -80,7 +80,7 @@ jobs:
           if ! docker pull "$RUNNER_IMAGE"; then
             echo "ERROR: Unable to pull $RUNNER_IMAGE."
             echo "The strategy-runner image is published from FXQuantBench/infra."
-            echo "Verify the infra build_docker workflow completed successfully and that BENCHMARK_BOT_TOKEN can read the package."
+            echo "Verify the infra publish completed successfully and that this repository has package read access in GHCR."
             exit 1
           fi
 
