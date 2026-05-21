@@ -160,15 +160,35 @@ jobs:
           username: benchmark-bot
           password: ${{ secrets.BENCHMARK_BOT_TOKEN }}
 
-      - name: Pull strategy runner image
+      - name: Resolve strategy runner image
         if: env.SKIP_JOB != 'true'
         run: |
-          if ! docker pull "$RUNNER_IMAGE"; then
-            echo "ERROR: Unable to pull $RUNNER_IMAGE."
-            echo "The strategy-runner image is published from FXQuantBench/infra."
-            echo "Verify the infra publish completed successfully and that this repository has package read access in GHCR."
+          REQUESTED_IMAGE="$RUNNER_IMAGE"
+          if docker pull "$REQUESTED_IMAGE"; then
+            exit 0
+          fi
+
+          echo "WARNING: Unable to pull $REQUESTED_IMAGE from GHCR."
+          echo "Private GHCR pulls require Manage Actions access on the strategy-runner package."
+
+          if [[ "$REQUESTED_IMAGE" != ghcr.io/fxquantbench/strategy-runner* ]]; then
+            echo "ERROR: $REQUESTED_IMAGE is not the infra-managed strategy-runner image, so no local build fallback is available."
             exit 1
           fi
+
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+
+          echo "Falling back to a local build from fxquantbench/infra."
+          gh repo clone fxquantbench/infra "$TMP_DIR/infra" -- --depth=1
+
+          LOCAL_RUNNER_IMAGE="strategy-runner-local:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build \
+            -t "$LOCAL_RUNNER_IMAGE" \
+            -f "$TMP_DIR/infra/docker/Dockerfile.strategy" \
+            "$TMP_DIR/infra"
+
+          echo "RUNNER_IMAGE=$LOCAL_RUNNER_IMAGE" >> "$GITHUB_ENV"
 
       - name: Run eval container
         if: env.SKIP_JOB != 'true'
