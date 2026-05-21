@@ -32,39 +32,85 @@ import duckdb
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
-from pydantic import BaseModel, field_validator
 
 # ---------------------------------------------------------------------------
-# Pydantic result schema — all fields required, no nulls
+# Result validation helpers — all fields required, no nulls
 # ---------------------------------------------------------------------------
 
-class ResultSchema(BaseModel):
-    run_id: str
-    mode: str
-    model_id: str
-    strategy_sha: str
-    start_date: str
-    end_date: str
-    sharpe: float
-    max_drawdown: float
-    win_rate: float
-    calmar_ratio: float
-    annualized_return: float
-    volatility: float
-    total_trades: int
-    avg_spread_cost_pips: float
-    runtime_seconds: float
-    completed_at: str
-    timed_out: bool
+RESULT_FLOAT_FIELDS = (
+    "sharpe",
+    "max_drawdown",
+    "win_rate",
+    "calmar_ratio",
+    "annualized_return",
+    "volatility",
+    "avg_spread_cost_pips",
+    "runtime_seconds",
+)
 
-    @field_validator("sharpe", "max_drawdown", "win_rate", "calmar_ratio",
-                     "annualized_return", "volatility", "avg_spread_cost_pips",
-                     "runtime_seconds")
-    @classmethod
-    def no_nan_inf(cls, v: float) -> float:
-        if math.isnan(v) or math.isinf(v):
-            return 0.0
-        return v
+RESULT_REQUIRED_FIELDS = {
+    "run_id",
+    "mode",
+    "model_id",
+    "strategy_sha",
+    "start_date",
+    "end_date",
+    *RESULT_FLOAT_FIELDS,
+    "total_trades",
+    "completed_at",
+    "timed_out",
+}
+
+RESULT_FIELD_ORDER = (
+    "run_id",
+    "mode",
+    "model_id",
+    "strategy_sha",
+    "start_date",
+    "end_date",
+    "sharpe",
+    "max_drawdown",
+    "win_rate",
+    "calmar_ratio",
+    "annualized_return",
+    "volatility",
+    "total_trades",
+    "avg_spread_cost_pips",
+    "runtime_seconds",
+    "completed_at",
+    "timed_out",
+)
+
+
+def _normalize_float(value: Any) -> float:
+    number = float(value)
+    if math.isnan(number) or math.isinf(number):
+        return 0.0
+    return number
+
+
+def _validate_result(payload: dict[str, Any]) -> dict[str, Any]:
+    missing = RESULT_REQUIRED_FIELDS - payload.keys()
+    if missing:
+        raise ValueError(f"Result payload missing fields: {sorted(missing)}")
+
+    normalized = dict(payload)
+    for field in RESULT_FLOAT_FIELDS:
+        normalized[field] = _normalize_float(normalized[field])
+
+    normalized["total_trades"] = int(normalized["total_trades"])
+    normalized["timed_out"] = bool(normalized["timed_out"])
+    return normalized
+
+
+class ResultSchema:
+    def __init__(self, **payload: Any) -> None:
+        normalized = _validate_result(payload)
+        for field in RESULT_FIELD_ORDER:
+            setattr(self, field, normalized[field])
+
+    def model_dump(self) -> dict[str, Any]:
+        return {field: getattr(self, field) for field in RESULT_FIELD_ORDER}
 
 
 # ---------------------------------------------------------------------------
@@ -330,18 +376,18 @@ def run_backtest_eval(conn: duckdb.DuckDBPyConnection, mode: str, run_id: str,
     metrics = _compute_metrics(signals_df, tick_df)
 
     runtime = round(time.time() - t_start, 3)
-    result = ResultSchema(
-        run_id=run_id,
-        mode=mode,
-        model_id=model_id,
-        strategy_sha=strategy_sha,
-        start_date=start_date,
-        end_date=end_date,
-        runtime_seconds=runtime,
-        completed_at=datetime.now(timezone.utc).isoformat(),
-        timed_out=False,
+    result = ResultSchema(**{
+        "run_id": run_id,
+        "mode": mode,
+        "model_id": model_id,
+        "strategy_sha": strategy_sha,
+        "start_date": start_date,
+        "end_date": end_date,
+        "runtime_seconds": runtime,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "timed_out": False,
         **metrics,
-    )
+    })
 
     _write_result(result.model_dump())
 
