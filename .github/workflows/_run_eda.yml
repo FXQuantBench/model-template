@@ -76,6 +76,13 @@ jobs:
             exit 1
           fi
 
+      - name: Restore canonical test_runner.py
+        if: env.SKIP_JOB != 'true'
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/fxquantbench/model-template/main/test_runner.py \
+            -o test_runner.py
+
       - name: Log in to GHCR
         if: env.SKIP_JOB != 'true'
         uses: docker/login-action@v3
