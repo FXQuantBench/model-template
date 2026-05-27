@@ -179,7 +179,7 @@ jobs:
         run: |
           RUN_ID="${{ steps.run_id.outputs.run_id }}"
           MODEL_ID="${{ inputs.model_id }}"
-          DEST_PATH="${MODEL_ID}/results/backtest/${RUN_ID}.json"
+            DEST_PATH="model_results/${MODEL_ID}/results/backtest/${RUN_ID}.json"
 
           git clone \
             --depth=1 \

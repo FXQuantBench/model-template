@@ -76,7 +76,7 @@ jobs:
           EVAL_DATE="${{ steps.date.outputs.eval_date }}"
           MODEL_ID="${{ inputs.model_id }}"
           STATUS=$(gh api \
-            "repos/fxquantbench/leaderboard/contents/${MODEL_ID}/results/eval/${EVAL_DATE}.json" \
+            "repos/fxquantbench/leaderboard/contents/model_results/${MODEL_ID}/results/eval/${EVAL_DATE}.json" \
             --jq '.name' 2>/dev/null || echo "")
           if [ -n "$STATUS" ]; then
             echo "Skipping: eval result for ${EVAL_DATE} already exists in leaderboard."
@@ -238,7 +238,7 @@ jobs:
         run: |
           EVAL_DATE="${{ steps.date.outputs.eval_date }}"
           MODEL_ID="${{ inputs.model_id }}"
-          DEST_PATH="${MODEL_ID}/results/eval/${EVAL_DATE}.json"
+            DEST_PATH="model_results/${MODEL_ID}/results/eval/${EVAL_DATE}.json"
 
           git clone \
             --depth=1 \
