@@ -315,7 +315,6 @@ conn = duckdb.connect()
 conn.execute("""
     CREATE VIEW GBPUSD AS
     SELECT * FROM read_parquet('path/to/local/ticks.parquet')
-    WHERE pair = 'GBPUSD'
 """)
 
 signals = run(conn, "2022-01-03", "2023-01-01")

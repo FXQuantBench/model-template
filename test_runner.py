@@ -118,7 +118,8 @@ class ResultSchema:
 # ---------------------------------------------------------------------------
 
 TIMEOUT_SECONDS = 300  # 5 minutes
-HF_DATASET = "hf://datasets/FXQuantBench/fx-ticks/*.parquet"
+HF_DATASET_ROOT = "hf://datasets/FXQuantBench/fx-ticks/GBPUSD"
+HF_DATASET_GLOB = f"{HF_DATASET_ROOT}/*/*/*/*.parquet"
 
 
 def _ms_from_date(date_str: str) -> int:
@@ -152,9 +153,8 @@ def _create_view(conn: duckdb.DuckDBPyConnection, start_date: str, end_date: str
     conn.execute(f"""
         CREATE OR REPLACE VIEW GBPUSD AS
         SELECT *
-        FROM read_parquet('{HF_DATASET}')
-        WHERE pair = 'GBPUSD'
-          AND timestamp_utc >= {start_ms}
+        FROM read_parquet('{HF_DATASET_GLOB}')
+        WHERE timestamp_utc >= {start_ms}
           AND timestamp_utc < {end_ms}
     """)
 

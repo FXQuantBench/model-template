@@ -28,6 +28,7 @@ import pytest
 
 import test_runner
 from test_runner import (
+    HF_DATASET_GLOB,
     ResultSchema,
     _ms_from_date,
     _validate_signals,
@@ -56,6 +57,11 @@ class TestMsFromDate:
         assert d2 - d1 == 86_400_000
 
 
+class TestHFDatasetGlob:
+    def test_uses_nested_gbpusd_hf_layout(self):
+        assert HF_DATASET_GLOB == "hf://datasets/FXQuantBench/fx-ticks/GBPUSD/*/*/*/*.parquet"
+
+
 # ---------------------------------------------------------------------------
 # AC1 — view filter strictly excludes rows at or beyond end_ms
 # ---------------------------------------------------------------------------
@@ -76,7 +82,6 @@ class TestCreateView:
         conn.execute("""
             CREATE TABLE raw_ticks (
                 timestamp_utc BIGINT,
-                pair          VARCHAR,
                 bid           DOUBLE,
                 ask           DOUBLE,
                 bid_volume    DOUBLE,
@@ -85,17 +90,15 @@ class TestCreateView:
         """)
         conn.execute(f"""
             INSERT INTO raw_ticks VALUES
-              ({start_ms + 1000}, 'GBPUSD', 1.27, 1.2701, 1000, 1000),
-              ({end_ms},           'GBPUSD', 1.28, 1.2801, 1000, 1000),
-              ({end_ms + 1000},    'GBPUSD', 1.29, 1.2901, 1000, 1000),
-              ({start_ms + 2000}, 'EURUSD', 1.08, 1.0801, 1000, 1000)
+              ({start_ms + 1000}, 1.27, 1.2701, 1000, 1000),
+              ({end_ms},          1.28, 1.2801, 1000, 1000),
+              ({end_ms + 1000},   1.29, 1.2901, 1000, 1000)
         """)
         # Apply the same filter logic as _create_view without touching HF
         conn.execute(f"""
             CREATE OR REPLACE VIEW GBPUSD AS
             SELECT * FROM raw_ticks
-            WHERE pair = 'GBPUSD'
-              AND timestamp_utc >= {_ms_from_date(self.START)}
+            WHERE timestamp_utc >= {_ms_from_date(self.START)}
               AND timestamp_utc <  {_ms_from_date(self.END)}
         """)
         return conn
@@ -119,12 +122,11 @@ class TestCreateView:
         rows = conn.execute("SELECT * FROM GBPUSD").fetchall()
         assert all(r[0] < end_ms for r in rows)
 
-    def test_other_pairs_excluded(self):
+    def test_view_uses_documented_tick_columns(self):
         conn = self._build_conn()
-        rows = conn.execute("SELECT DISTINCT pair FROM GBPUSD").fetchall()
-        pairs = [r[0] for r in rows]
-        assert "EURUSD" not in pairs
-        assert all(p == "GBPUSD" for p in pairs)
+        rows = conn.execute("PRAGMA table_info('GBPUSD')").fetchall()
+        columns = [row[1] for row in rows]
+        assert columns == ["timestamp_utc", "bid", "ask", "bid_volume", "ask_volume"]
 
     def test_empty_window_returns_zero_rows(self):
         """A window where start == end must return no rows."""
@@ -132,16 +134,15 @@ class TestCreateView:
         ms = _ms_from_date("2024-01-01")
         conn.execute("""
             CREATE TABLE raw_ticks (
-                timestamp_utc BIGINT, pair VARCHAR,
+                timestamp_utc BIGINT,
                 bid DOUBLE, ask DOUBLE, bid_volume DOUBLE, ask_volume DOUBLE
             )
         """)
-        conn.execute(f"INSERT INTO raw_ticks VALUES ({ms}, 'GBPUSD', 1.27, 1.2701, 1000, 1000)")
+        conn.execute(f"INSERT INTO raw_ticks VALUES ({ms}, 1.27, 1.2701, 1000, 1000)")
         conn.execute(f"""
             CREATE OR REPLACE VIEW GBPUSD AS
             SELECT * FROM raw_ticks
-            WHERE pair = 'GBPUSD'
-              AND timestamp_utc >= {ms}
+            WHERE timestamp_utc >= {ms}
               AND timestamp_utc <  {ms}
         """)
         assert conn.execute("SELECT COUNT(*) FROM GBPUSD").fetchone()[0] == 0

@@ -110,16 +110,38 @@ jobs:
               with open(github_output, "a") as fh:
                   fh.write(f"{key}={value}\n")
 
+            def day_parquet_path(day: date) -> str:
+              return (
+                "datasets/FXQuantBench/fx-ticks/"
+                f"GBPUSD/{day:%Y/%m/%d}/ticks_{day.isoformat()}.parquet"
+              )
+
           try:
               HfApi(token=hf_token).auth_check("FXQuantBench/fx-ticks", repo_type="dataset")
               hffs = HfFileSystem(token=hf_token)
-              parquet_files = sorted(
-                  path
-                  for path in hffs.ls("datasets/FXQuantBench/fx-ticks", detail=False)
-                  if path.endswith(".parquet")
-              )
+              parquet_files = []
+              missing_paths = []
+              day = window_start
+              while day < window_end:
+                parquet_path = day_parquet_path(day)
+                if hffs.exists(parquet_path):
+                  parquet_files.append(parquet_path)
+                else:
+                  missing_paths.append(day.isoformat())
+                  print(
+                    f"MISSING: Expected GBPUSD shard {parquet_path} was not found.",
+                    file=sys.stderr,
+                  )
+                day += timedelta(days=1)
+              if missing_paths:
+                set_output("status", "missing")
+                set_output("missing_days", ",".join(missing_paths))
+                sys.exit(1)
               if not parquet_files:
-                  raise RuntimeError("No parquet files found in FXQuantBench/fx-ticks root.")
+                raise RuntimeError(
+                  "No parquet files found for the requested eval window under "
+                  "FXQuantBench/fx-ticks/GBPUSD."
+                )
               dataset = ds.dataset(
                   parquet_files,
                   filesystem=pafs.PyFileSystem(pafs.FSSpecHandler(hffs)),
@@ -139,8 +161,7 @@ jobs:
               try:
                   count = dataset.count_rows(
                       filter=(
-                          (pc.field("pair") == "GBPUSD")
-                          & (pc.field("timestamp_utc") >= day_start_ms)
+                      (pc.field("timestamp_utc") >= day_start_ms)
                           & (pc.field("timestamp_utc") < day_end_ms)
                       )
                   )
