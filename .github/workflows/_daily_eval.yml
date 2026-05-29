@@ -110,10 +110,10 @@ jobs:
               with open(github_output, "a") as fh:
                   fh.write(f"{key}={value}\n")
 
-            def day_parquet_path(day: date) -> str:
+          def day_parquet_path(day: date) -> str:
               return (
-                "datasets/FXQuantBench/fx-ticks/"
-                f"GBPUSD/{day:%Y/%m/%d}/ticks_{day.isoformat()}.parquet"
+                  "datasets/FXQuantBench/fx-ticks/"
+                  f"GBPUSD/{day:%Y/%m/%d}/ticks_{day.isoformat()}.parquet"
               )
 
           try:
@@ -123,25 +123,25 @@ jobs:
               missing_paths = []
               day = window_start
               while day < window_end:
-                parquet_path = day_parquet_path(day)
-                if hffs.exists(parquet_path):
-                  parquet_files.append(parquet_path)
-                else:
-                  missing_paths.append(day.isoformat())
-                  print(
-                    f"MISSING: Expected GBPUSD shard {parquet_path} was not found.",
-                    file=sys.stderr,
-                  )
-                day += timedelta(days=1)
+                  parquet_path = day_parquet_path(day)
+                  if hffs.exists(parquet_path):
+                      parquet_files.append(parquet_path)
+                  else:
+                      missing_paths.append(day.isoformat())
+                      print(
+                          f"MISSING: Expected GBPUSD shard {parquet_path} was not found.",
+                          file=sys.stderr,
+                      )
+                  day += timedelta(days=1)
               if missing_paths:
-                set_output("status", "missing")
-                set_output("missing_days", ",".join(missing_paths))
-                sys.exit(1)
+                  set_output("status", "missing")
+                  set_output("missing_days", ",".join(missing_paths))
+                  sys.exit(1)
               if not parquet_files:
-                raise RuntimeError(
-                  "No parquet files found for the requested eval window under "
-                  "FXQuantBench/fx-ticks/GBPUSD."
-                )
+                  raise RuntimeError(
+                      "No parquet files found for the requested eval window under "
+                      "FXQuantBench/fx-ticks/GBPUSD."
+                  )
               dataset = ds.dataset(
                   parquet_files,
                   filesystem=pafs.PyFileSystem(pafs.FSSpecHandler(hffs)),
