@@ -91,26 +91,44 @@ jobs:
         run: |
           WINDOW_START="${{ steps.date.outputs.window_start }}"
           WINDOW_END="${{ steps.date.outputs.window_end }}"
-          pip install --quiet duckdb
+          python3 -m pip install --quiet --disable-pip-version-check huggingface_hub pyarrow fsspec
           python3 - <<PYEOF
-          import duckdb, os, sys
+          import os, sys
           from datetime import date, timedelta
+
+          import pyarrow.dataset as ds
+          from pyarrow import compute as pc
+          from pyarrow import fs as pafs
+          from huggingface_hub import HfApi, HfFileSystem
 
           hf_token = os.environ["HF_TOKEN_RO"]
           window_start = date.fromisoformat("$WINDOW_START")
           window_end   = date.fromisoformat("$WINDOW_END")  # exclusive
+          github_output = os.environ["GITHUB_OUTPUT"]
 
-          conn = duckdb.connect()
-          conn.execute("INSTALL httpfs; LOAD httpfs;")
-          conn.execute("SET s3_endpoint='huggingface.co';")
-          conn.execute("SET s3_access_key_id='user';")
-          conn.execute(f"SET s3_secret_access_key='{hf_token}';")
-          conn.execute("SET s3_session_token='';")
+          def set_output(key: str, value: str) -> None:
+              with open(github_output, "a") as fh:
+                  fh.write(f"{key}={value}\n")
+
           try:
-              conn.execute(f"SET hf_token='{hf_token}';")
-          except duckdb.Error as exc:
-              if 'unrecognized configuration parameter "hf_token"' not in str(exc):
-                  raise
+              HfApi(token=hf_token).auth_check("FXQuantBench/fx-ticks", repo_type="dataset")
+              hffs = HfFileSystem(token=hf_token)
+              parquet_files = sorted(
+                  path
+                  for path in hffs.ls("datasets/FXQuantBench/fx-ticks", detail=False)
+                  if path.endswith(".parquet")
+              )
+              if not parquet_files:
+                  raise RuntimeError("No parquet files found in FXQuantBench/fx-ticks root.")
+              dataset = ds.dataset(
+                  parquet_files,
+                  filesystem=pafs.PyFileSystem(pafs.FSSpecHandler(hffs)),
+                  format="parquet",
+              )
+          except Exception as exc:
+              set_output("status", "error")
+              print(f"ERROR preparing HF dataset access: {exc}", file=sys.stderr)
+              sys.exit(2)
 
           missing = []
           day = window_start
@@ -119,14 +137,16 @@ jobs:
               day_start_ms = int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp() * 1000)
               day_end_ms   = day_start_ms + 86_400_000
               try:
-                  count = conn.execute(f"""
-                      SELECT COUNT(*) FROM read_parquet('hf://datasets/FXQuantBench/fx-ticks/*.parquet')
-                      WHERE pair = 'GBPUSD'
-                        AND timestamp_utc >= {day_start_ms}
-                        AND timestamp_utc <  {day_end_ms}
-                  """).fetchone()[0]
-              except Exception as e:
-                  print(f"ERROR querying HF dataset for {day}: {e}", file=sys.stderr)
+                  count = dataset.count_rows(
+                      filter=(
+                          (pc.field("pair") == "GBPUSD")
+                          & (pc.field("timestamp_utc") >= day_start_ms)
+                          & (pc.field("timestamp_utc") < day_end_ms)
+                      )
+                  )
+              except Exception as exc:
+                  set_output("status", "error")
+                  print(f"ERROR querying HF dataset for {day}: {exc}", file=sys.stderr)
                   sys.exit(2)
               if count == 0:
                   missing.append(day.isoformat())
@@ -136,18 +156,28 @@ jobs:
               day += timedelta(days=1)
 
           if missing:
+              set_output("status", "missing")
+              set_output("missing_days", ",".join(missing))
               sys.exit(1)
+          set_output("status", "ok")
           PYEOF
 
+      - name: Fail on shard check error
+        if: steps.shard_check.outcome == 'failure' && steps.shard_check.outputs.status != 'missing'
+        run: |
+          echo "HF shard preflight failed unexpectedly. See the shard check logs above."
+          exit 1
+
       - name: Open issue if shard missing
-        if: steps.shard_check.outcome == 'failure'
+        if: steps.shard_check.outputs.status == 'missing'
         run: |
           EVAL_DATE="${{ steps.date.outputs.eval_date }}"
           WINDOW_START="${{ steps.date.outputs.window_start }}"
+          MISSING_DAYS="${{ steps.shard_check.outputs.missing_days }}"
           gh issue create \
             --repo "${{ inputs.repo }}" \
             --title "Missing HF shard: ${EVAL_DATE} (window ${WINDOW_START}→${EVAL_DATE})" \
-            --body "The daily eval workflow could not find GBPUSD tick data in \`FXQuantBench/fx-ticks\` for one or more days in the window **${WINDOW_START} → ${EVAL_DATE}** (inclusive). The eval was skipped. Please verify the dataset and re-run once the shards are available." \
+            --body "The daily eval workflow could not find GBPUSD tick data in \`FXQuantBench/fx-ticks\` for one or more days in the window **${WINDOW_START} → ${EVAL_DATE}** (inclusive). Missing day(s): ${MISSING_DAYS}. The eval was skipped. Please verify the dataset and re-run once the shards are available." \
             --label "data-missing" 2>/dev/null || true
           echo "Issue opened for missing shard(s) in window ${WINDOW_START}→${EVAL_DATE}. Exiting."
           exit 1
