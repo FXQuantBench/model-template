@@ -1,9 +1,6 @@
 name: Agentic Loop
 
 on:
-  workflow_run:
-    workflows: ["Run EDA", "Run Backtest"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -50,6 +47,10 @@ jobs:
 
       - name: Guard — too soon
         run: |
+          if [ "${{ github.actor }}" = "github-actions[bot]" ]; then
+            echo "Skipping too-soon guard for workflow-dispatched continuation."
+            exit 0
+          fi
           LAST_RUN="${{ steps.state.outputs.last_run }}"
           if [ -n "$LAST_RUN" ]; then
             DELTA=$(python3 -c "
@@ -114,9 +115,8 @@ jobs:
       - name: Build context file
         if: env.SKIP_JOB != 'true'
         run: |
-          TRIGGER_INFO=""
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            TRIGGER_INFO="Triggering workflow: ${{ github.event.workflow_run.name }} | Conclusion: ${{ github.event.workflow_run.conclusion }}"
+          if [ "${{ github.actor }}" = "github-actions[bot]" ]; then
+            TRIGGER_INFO="Trigger: workflow_dispatch from child workflow"
           else
             TRIGGER_INFO="Trigger: manual workflow_dispatch"
           fi
@@ -159,8 +159,8 @@ jobs:
         if: env.SKIP_JOB != 'true'
         run: |
           TIMESTAMP=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M'))")
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            LABEL="${{ github.event.workflow_run.name }}"
+          if [ "${{ github.actor }}" = "github-actions[bot]" ]; then
+            LABEL="workflow_dispatch-resume"
           else
             LABEL="workflow_dispatch"
           fi
@@ -221,6 +221,8 @@ jobs:
 
       - name: Process first valid command
         if: env.SKIP_JOB != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PYEOF'
           import json, os, subprocess, sys

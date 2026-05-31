@@ -6,6 +6,7 @@ on:
 permissions:
   contents: write
   packages: read
+  actions: write
 
 jobs:
   backtest:
@@ -17,3 +18,14 @@ jobs:
       in_sample_start: ${{ vars.IN_SAMPLE_START }}
       in_sample_end: ${{ vars.IN_SAMPLE_END }}
       runner_image: ${{ vars.STRATEGY_RUNNER_IMAGE || 'ghcr.io/fxquantbench/strategy-runner:latest' }}
+
+  resume_loop:
+    if: ${{ always() && needs.backtest.result != 'cancelled' }}
+    needs: backtest
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resume agent loop
+        run: |
+          gh workflow run agentic_loop.yml --ref main
