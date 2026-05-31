@@ -222,13 +222,18 @@ def run_eda(conn: duckdb.DuckDBPyConnection) -> None:
     eda_output = os.environ["EDA_OUTPUT"]
 
     Path(eda_output).parent.mkdir(parents=True, exist_ok=True)
+    script_globals = {
+        "__name__": "__main__",
+        "__file__": eda_script,
+        "conn": conn,
+        "pairs": ["GBPUSD"],
+    }
 
     with open(eda_output, "w") as out_file:
         with contextlib.redirect_stdout(out_file), contextlib.redirect_stderr(out_file):
             with open(eda_script, "r") as f:
                 source = f.read()
-            exec(compile(source, eda_script, "exec"),  # noqa: S102
-                 {"conn": conn, "pairs": ["GBPUSD"]})
+            exec(compile(source, eda_script, "exec"), script_globals)  # noqa: S102
 
 
 # ---------------------------------------------------------------------------

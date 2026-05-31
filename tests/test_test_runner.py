@@ -482,3 +482,24 @@ class TestEDAMode:
             text = output.read_text()
             assert "DuckDBPyConnection" in text
             assert "GBPUSD" in text
+
+    def test_main_guarded_script_executes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "eda_main.py"
+            output = Path(tmpdir) / "eda.log"
+            script.write_text(
+                "if __name__ == '__main__':\n"
+                "    print(__file__.endswith('eda_main.py'))\n"
+                "    print('main guard ran')\n"
+            )
+
+            conn = duckdb.connect()
+            with patch.dict(os.environ, {
+                "EDA_SCRIPT": str(script),
+                "EDA_OUTPUT": str(output),
+            }):
+                test_runner.run_eda(conn)
+
+            text = output.read_text()
+            assert "True" in text
+            assert "main guard ran" in text
