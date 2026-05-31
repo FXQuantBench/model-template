@@ -203,6 +203,56 @@ jobs:
           echo "Issue opened for missing shard(s) in window ${WINDOW_START}→${EVAL_DATE}. Exiting."
           exit 1
 
+      - name: Stage eval shards locally
+        if: env.SKIP_JOB != 'true'
+        env:
+          HF_TOKEN_RO: ${{ secrets.HF_TOKEN_RO }}
+        run: |
+          WINDOW_START="${{ steps.date.outputs.window_start }}"
+          WINDOW_END="${{ steps.date.outputs.window_end }}"
+          STAGE_DIR="$RUNNER_TEMP/eval_input"
+          mkdir -p "$STAGE_DIR"
+          python3 - <<PYEOF
+          import os
+          import shutil
+          from datetime import date, timedelta
+          from pathlib import Path
+
+          from huggingface_hub import hf_hub_download
+
+          token = os.environ["HF_TOKEN_RO"]
+          window_start = date.fromisoformat("$WINDOW_START")
+          window_end = date.fromisoformat("$WINDOW_END")
+          stage_dir = Path("$STAGE_DIR")
+          stage_dir.mkdir(parents=True, exist_ok=True)
+
+          def day_filename(day: date) -> str:
+              return f"GBPUSD/{day:%Y/%m/%d}/ticks_{day.isoformat()}.parquet"
+
+          downloaded = 0
+          day = window_start
+          while day < window_end:
+              filename = day_filename(day)
+              cached_path = Path(
+                  hf_hub_download(
+                      repo_id="FXQuantBench/fx-ticks",
+                      repo_type="dataset",
+                      filename=filename,
+                      token=token,
+                  )
+              )
+              target_path = stage_dir / cached_path.name
+              shutil.copyfile(cached_path, target_path)
+              print(f"Downloaded {filename} -> {target_path}")
+              downloaded += 1
+              day += timedelta(days=1)
+
+          if downloaded == 0:
+              raise RuntimeError("No eval parquet shards were downloaded.")
+          PYEOF
+          chmod -R a+rX "$STAGE_DIR"
+          ls -lah "$STAGE_DIR"
+
       - name: Restore canonical test_runner.py
         if: env.SKIP_JOB != 'true'
         run: |
@@ -259,12 +309,14 @@ jobs:
             --rm \
             -e MODE=eval \
             -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
+            -e TICK_DATA_GLOB="/input/*.parquet" \
             -e START_DATE="${{ steps.date.outputs.window_start }}" \
             -e END_DATE="${{ steps.date.outputs.window_end }}" \
             -e RUN_ID="${{ steps.date.outputs.eval_date }}" \
             -e MODEL_ID="${{ inputs.model_id }}" \
             -e OUTPUT_DIR="/output" \
             -e STRATEGY_SHA="${{ steps.date.outputs.strategy_sha }}" \
+            -v "$RUNNER_TEMP/eval_input:/input:ro" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
             -v "$RUNNER_TEMP/eval_output:/output" \
             "$RUNNER_IMAGE" \

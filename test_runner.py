@@ -4,6 +4,7 @@ test_runner.py — read-only execution engine (protected by CODEOWNERS).
 Environment variables
 ---------------------
 HF_TOKEN       : HuggingFace read-only token for dataset access
+TICK_DATA_GLOB : optional local parquet glob mounted into the runner container
 MODE           : "eda" | "backtest" | "eval"
 EDA_SCRIPT     : path to EDA script (MODE=eda only)
 EDA_OUTPUT     : path where EDA stdout/stderr are written (MODE=eda only)
@@ -120,6 +121,19 @@ class ResultSchema:
 TIMEOUT_SECONDS = 300  # 5 minutes
 HF_DATASET_ROOT = "s3://datasets/FXQuantBench/fx-ticks/GBPUSD"
 HF_DATASET_GLOB = f"{HF_DATASET_ROOT}/*/*/*/*.parquet"
+LOCAL_DATASET_GLOB_ENV = "TICK_DATA_GLOB"
+
+
+def _tick_data_glob() -> str:
+    return os.environ.get(LOCAL_DATASET_GLOB_ENV, HF_DATASET_GLOB)
+
+
+def _using_local_tick_data() -> bool:
+    return bool(os.environ.get(LOCAL_DATASET_GLOB_ENV))
+
+
+def _sql_string_literal(value: str) -> str:
+    return value.replace("'", "''")
 
 
 def _ms_from_date(date_str: str) -> int:
@@ -130,6 +144,12 @@ def _ms_from_date(date_str: str) -> int:
 
 def _build_connection(hf_token: str) -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect()
+    if _using_local_tick_data():
+        return conn
+    if not hf_token:
+        raise RuntimeError(
+            f"HF_TOKEN must be set when {LOCAL_DATASET_GLOB_ENV} is not provided"
+        )
     conn.execute("INSTALL httpfs; LOAD httpfs;")
     conn.execute(f"SET s3_endpoint='huggingface.co';")
     conn.execute(f"SET s3_access_key_id='user';")
@@ -150,13 +170,23 @@ def _create_view(conn: duckdb.DuckDBPyConnection, start_date: str, end_date: str
     """
     start_ms = _ms_from_date(start_date)
     end_ms = _ms_from_date(end_date)
-    conn.execute(f"""
-        CREATE OR REPLACE VIEW GBPUSD AS
-        SELECT *
-        FROM read_parquet('{HF_DATASET_GLOB}')
-        WHERE timestamp_utc >= {start_ms}
-          AND timestamp_utc < {end_ms}
-    """)
+    dataset_glob = _tick_data_glob()
+    try:
+        conn.execute(f"""
+            CREATE OR REPLACE VIEW GBPUSD AS
+            SELECT *
+            FROM read_parquet('{_sql_string_literal(dataset_glob)}')
+            WHERE timestamp_utc >= {start_ms}
+              AND timestamp_utc < {end_ms}
+        """)
+    except duckdb.Error as exc:
+        if _using_local_tick_data():
+            raise
+        raise RuntimeError(
+            "Failed to load GBPUSD ticks from Hugging Face. "
+            "Set TICK_DATA_GLOB to a mounted local parquet glob or verify HF_TOKEN "
+            "and DuckDB httpfs/S3 access."
+        ) from exc
 
 
 def _output_dir() -> Path:
@@ -427,7 +457,7 @@ def main() -> None:
     t_start = time.time()
 
     mode = os.environ.get("MODE", "backtest")
-    hf_token = os.environ["HF_TOKEN"]
+    hf_token = os.environ.get("HF_TOKEN", "")
     run_id = os.environ.get("RUN_ID", "local")
     model_id = os.environ.get("MODEL_ID", "unknown")
     strategy_sha = os.environ.get("STRATEGY_SHA", "unknown")

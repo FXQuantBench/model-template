@@ -29,8 +29,10 @@ import pytest
 import test_runner
 from test_runner import (
     HF_DATASET_GLOB,
+    LOCAL_DATASET_GLOB_ENV,
     ResultSchema,
     _ms_from_date,
+    _tick_data_glob,
     _validate_signals,
 )
 
@@ -60,6 +62,25 @@ class TestMsFromDate:
 class TestHFDatasetGlob:
     def test_uses_nested_gbpusd_hf_layout(self):
         assert HF_DATASET_GLOB == "s3://datasets/FXQuantBench/fx-ticks/GBPUSD/*/*/*/*.parquet"
+
+
+class TestTickDataSourceSelection:
+    def test_defaults_to_hf_dataset_glob(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(LOCAL_DATASET_GLOB_ENV, None)
+            assert _tick_data_glob() == HF_DATASET_GLOB
+
+    def test_local_override_takes_precedence(self):
+        with patch.dict(os.environ, {LOCAL_DATASET_GLOB_ENV: "/input/*.parquet"}, clear=False):
+            assert _tick_data_glob() == "/input/*.parquet"
+
+    def test_build_connection_allows_local_override_without_hf_token(self):
+        with patch.dict(os.environ, {LOCAL_DATASET_GLOB_ENV: "/input/*.parquet"}, clear=False):
+            conn = test_runner._build_connection("")
+            try:
+                assert conn.execute("SELECT 1").fetchone() == (1,)
+            finally:
+                conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +167,41 @@ class TestCreateView:
               AND timestamp_utc <  {ms}
         """)
         assert conn.execute("SELECT COUNT(*) FROM GBPUSD").fetchone()[0] == 0
+
+    def test_create_view_reads_from_local_override_glob(self):
+        conn = duckdb.connect()
+        start_ms = _ms_from_date(self.START)
+        end_ms = _ms_from_date(self.END)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parquet_dir = Path(tmpdir)
+            parquet_glob = f"{parquet_dir.as_posix()}/*.parquet"
+            parquet_path = parquet_dir / "ticks_2024-01-01.parquet"
+
+            conn.execute("""
+                CREATE TABLE raw_ticks (
+                    timestamp_utc BIGINT,
+                    bid           DOUBLE,
+                    ask           DOUBLE,
+                    bid_volume    DOUBLE,
+                    ask_volume    DOUBLE
+                )
+            """)
+            conn.execute(f"""
+                INSERT INTO raw_ticks VALUES
+                  ({start_ms + 1000}, 1.27, 1.2701, 1000, 1000),
+                  ({end_ms},          1.28, 1.2801, 1000, 1000),
+                  ({end_ms + 1000},   1.29, 1.2901, 1000, 1000)
+            """)
+            conn.execute(f"COPY raw_ticks TO '{parquet_path.as_posix()}' (FORMAT PARQUET)")
+            conn.execute("DROP TABLE raw_ticks")
+
+            with patch.dict(os.environ, {LOCAL_DATASET_GLOB_ENV: parquet_glob}, clear=False):
+                test_runner._create_view(conn, self.START, self.END)
+
+            rows = conn.execute("SELECT * FROM GBPUSD ORDER BY timestamp_utc").fetchall()
+            assert len(rows) == 1
+            assert rows[0][0] == start_ms + 1000
 
 
 # ---------------------------------------------------------------------------
