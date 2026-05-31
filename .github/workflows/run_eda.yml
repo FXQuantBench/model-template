@@ -32,4 +32,4 @@ jobs:
     steps:
       - name: Resume agent loop
         run: |
-          gh workflow run agentic_loop.yml --ref main
+          gh workflow run agentic_loop.yml --repo "${{ github.repository }}" --ref main
