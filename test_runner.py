@@ -118,7 +118,7 @@ class ResultSchema:
 # ---------------------------------------------------------------------------
 
 TIMEOUT_SECONDS = 300  # 5 minutes
-HF_DATASET_ROOT = "hf://datasets/FXQuantBench/fx-ticks/GBPUSD"
+HF_DATASET_ROOT = "s3://datasets/FXQuantBench/fx-ticks/GBPUSD"
 HF_DATASET_GLOB = f"{HF_DATASET_ROOT}/*/*/*/*.parquet"
 
 

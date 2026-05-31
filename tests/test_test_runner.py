@@ -59,7 +59,7 @@ class TestMsFromDate:
 
 class TestHFDatasetGlob:
     def test_uses_nested_gbpusd_hf_layout(self):
-        assert HF_DATASET_GLOB == "hf://datasets/FXQuantBench/fx-ticks/GBPUSD/*/*/*/*.parquet"
+        assert HF_DATASET_GLOB == "s3://datasets/FXQuantBench/fx-ticks/GBPUSD/*/*/*/*.parquet"
 
 
 # ---------------------------------------------------------------------------
