@@ -198,9 +198,11 @@ jobs:
       - name: Commit and push
         if: env.SKIP_JOB != 'true'
         run: |
-          git add "research/${{ inputs.file_id }}.log" research_summary.md
+          git add research_summary.md
+          git add -f "research/${{ inputs.file_id }}.log"
           if [ -d research/archive ]; then
             git add research/archive/
+            find research/archive -name '*.log' -print0 | xargs -0r git add -f --
           fi
           git diff --cached --quiet && echo "No changes." || \
             git commit -m "eda: ${{ inputs.file_id }}"
