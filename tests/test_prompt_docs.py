@@ -126,6 +126,9 @@ class TestWorkflowDataStaging:
             assert "-e TICK_DATA_GLOB=\"/input/*.parquet\"" in text
             assert ":/input:ro" in text
             assert 'repo_id="FXQuantBench/fx-ticks"' in text
+            assert "Write in-sample stage summary" in text
+            assert "In-sample shard stage: cache_hit=${CACHE_HIT_VALUE} shard_count=${SHARD_COUNT}/${EXPECTED_COUNT} cache_complete=${CACHE_COMPLETE_VALUE}" in text
+            assert '>> "$GITHUB_STEP_SUMMARY"' in text
 
     def test_daily_eval_stays_ephemeral_and_does_not_share_dev_cache(self):
         text = _read(".github/workflows/_daily_eval.yml")

@@ -236,6 +236,18 @@ jobs:
           path: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
           key: ${{ steps.insample_cache_metadata.outputs.cache_key }}
 
+      - name: Write in-sample stage summary
+        env:
+          CACHE_COMPLETE: ${{ steps.verify_insample_cache.outputs.cache_complete }}
+          CACHE_HIT: ${{ steps.restore_insample_cache.outputs.cache-hit }}
+          EXPECTED_COUNT: ${{ steps.verify_insample_cache.outputs.expected_count }}
+          STAGE_DIR: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
+        run: |
+          SHARD_COUNT=$(find "$STAGE_DIR" -maxdepth 1 -name '*.parquet' | wc -l | tr -d ' ')
+          CACHE_HIT_VALUE="${CACHE_HIT:-false}"
+          CACHE_COMPLETE_VALUE="${CACHE_COMPLETE:-false}"
+          echo "In-sample shard stage: cache_hit=${CACHE_HIT_VALUE} shard_count=${SHARD_COUNT}/${EXPECTED_COUNT} cache_complete=${CACHE_COMPLETE_VALUE}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run backtest container
         run: |
           mkdir -p "$RUNNER_TEMP/backtest_output"
