@@ -173,6 +173,7 @@ def _build_connection(hf_token: str) -> duckdb.DuckDBPyConnection:
         )
     conn.execute("INSTALL httpfs; LOAD httpfs;")
     conn.execute(f"SET s3_endpoint='huggingface.co';")
+    conn.execute("SET s3_url_style='path';")
     conn.execute(f"SET s3_access_key_id='user';")
     conn.execute(f"SET s3_secret_access_key='{hf_token}';")
     conn.execute(f"SET s3_session_token='';")

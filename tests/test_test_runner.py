@@ -97,6 +97,19 @@ class TestTickDataSourceSelection:
             finally:
                 conn.close()
 
+    def test_build_connection_uses_path_style_for_hf_endpoint(self):
+        fake_conn = MagicMock()
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(LOCAL_DATASET_GLOB_ENV, None)
+            with patch("test_runner.duckdb.connect", return_value=fake_conn):
+                result = test_runner._build_connection("hf-test-token")
+
+        assert result is fake_conn
+        executed_sql = [call.args[0] for call in fake_conn.execute.call_args_list]
+        assert "SET s3_endpoint='huggingface.co';" in executed_sql
+        assert "SET s3_url_style='path';" in executed_sql
+
 
 # ---------------------------------------------------------------------------
 # AC1 — view filter strictly excludes rows at or beyond end_ms
