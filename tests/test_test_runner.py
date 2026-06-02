@@ -230,6 +230,37 @@ class TestCreateView:
             assert len(rows) == 1
             assert rows[0][0] == start_ms + 1000
 
+    def test_create_view_projects_only_documented_columns_from_parquet(self):
+        conn = duckdb.connect()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parquet_dir = Path(tmpdir)
+            parquet_glob = f"{parquet_dir.as_posix()}/*.parquet"
+            parquet_path = parquet_dir / "ticks_2024-01-01.parquet"
+
+            conn.execute("""
+                CREATE TABLE raw_ticks (
+                    timestamp_utc BIGINT,
+                    bid DOUBLE,
+                    ask DOUBLE,
+                    bid_volume DOUBLE,
+                    ask_volume DOUBLE,
+                    is_interpolated BOOLEAN
+                )
+            """)
+            conn.execute(f"""
+                INSERT INTO raw_ticks VALUES
+                  ({_ms_from_date(self.START) + 1000}, 1.27, 1.2701, 1000, 1000, TRUE)
+            """)
+            conn.execute(f"COPY raw_ticks TO '{parquet_path.as_posix()}' (FORMAT PARQUET)")
+            conn.execute("DROP TABLE raw_ticks")
+
+            with patch.dict(os.environ, {LOCAL_DATASET_GLOB_ENV: parquet_glob}, clear=False):
+                test_runner._create_view(conn, self.START, self.END)
+
+            columns = [row[1] for row in conn.execute("PRAGMA table_info('GBPUSD')").fetchall()]
+            assert columns == ["timestamp_utc", "bid", "ask", "bid_volume", "ask_volume"]
+
 
 # ---------------------------------------------------------------------------
 # _validate_signals

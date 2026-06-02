@@ -92,6 +92,8 @@ class TestReadmeGuidance:
         assert "first non-empty log line" in text
         assert "new file ID" in text
         assert "does not include a `pair` column" in text
+        assert "fixed-window cache keyed by `IN_SAMPLE_START` and `IN_SAMPLE_END`" in text
+        assert "Daily eval uses its own ephemeral stage directory" in text
 
 
 class TestEDAWorkflowGuidance:
@@ -107,3 +109,28 @@ class TestEDAWorkflowGuidance:
         assert "-e END_DATE=\"${{ inputs.in_sample_end }}\"" in text
         assert "EDA_EMPTY_LOG: 'false'" in text
         assert "Fail workflow on empty EDA log" in text
+
+
+class TestWorkflowDataStaging:
+    def test_eda_and_backtest_stage_local_in_sample_shards(self):
+        for relative_path in (
+            ".github/workflows/_run_eda.yml",
+            ".github/workflows/_run_backtest.yml",
+        ):
+            text = _read(relative_path)
+            assert "INSAMPLE_CACHE_NAMESPACE: 'gbpusd-insample-v1'" in text
+            assert "actions/cache/restore@v4" in text
+            assert "actions/cache/save@v4" in text
+            assert "Stage in-sample shards locally" in text
+            assert "cache_key=${{ env.INSAMPLE_CACHE_NAMESPACE }}-${{ runner.os }}-${{ inputs.in_sample_start }}-${{ inputs.in_sample_end }}" in text
+            assert "-e TICK_DATA_GLOB=\"/input/*.parquet\"" in text
+            assert ":/input:ro" in text
+            assert 'repo_id="FXQuantBench/fx-ticks"' in text
+
+    def test_daily_eval_stays_ephemeral_and_does_not_share_dev_cache(self):
+        text = _read(".github/workflows/_daily_eval.yml")
+        assert "EVAL_STAGE_ISOLATION: 'ephemeral_only'" in text
+        assert "Stage eval shards locally (ephemeral only)" in text
+        assert "no shared cache restore/save is allowed" in text
+        assert "actions/cache/restore@v4" not in text
+        assert "actions/cache/save@v4" not in text

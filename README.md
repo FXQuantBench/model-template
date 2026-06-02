@@ -135,6 +135,8 @@ The model receives the full `prompt_context.md` as the system prompt plus dynami
 
 `IN_SAMPLE_START` and `IN_SAMPLE_END` define the GBPUSD tick data window the model is allowed to train on. The runner enforces a strict `[start, end)` window — no data outside this range is accessible during EDA or backtest.
 
+EDA and backtest now stage the exact in-sample parquet day shards locally on the GitHub runner and pass them into the strategy-runner container via `TICK_DATA_GLOB=/input/*.parquet`. Those workflows may restore a fixed-window cache keyed by `IN_SAMPLE_START` and `IN_SAMPLE_END` to avoid re-downloading the same shards. Daily eval uses its own ephemeral stage directory and must not restore that in-sample cache.
+
 Choose dates that leave at least 6 months of unseen data for out-of-sample evaluation. The daily eval job tests `strategy.py` on yesterday's ticks (always outside the in-sample window).
 
 `STRATEGY_RUNNER_IMAGE` defaults to `ghcr.io/fxquantbench/strategy-runner:latest`, which is built and published from `FXQuantBench/infra`. Set it to a versioned tag or digest if you want to pin the execution runtime across workflow runs.
@@ -186,7 +188,7 @@ The loop re-triggers itself after each EDA or backtest completes, so a single `w
 
 Each `agentic_loop.yml` invocation increments `daily_count` before it dispatches any child workflow. Manual `workflow_dispatch` runs are blocked if the previous loop was less than 30 minutes ago, but child-workflow resumes from `run_eda.yml` and `run_backtest.yml` bypass that gap check while still counting against `MAX_DAILY_ITERATIONS`.
 
-EDA scripts run inside `test_runner.py` with `conn` and `pairs = ["GBPUSD"]` injected into the script namespace. Use `conn.execute(...)` against the preloaded `GBPUSD` view instead of opening a fresh DuckDB connection. The EDA workflow copies only the first non-empty log line into `research_summary.md`, and a committed `research/<file_id>.log` causes future `/run-eda <file_id>` attempts to be skipped, so retries need a new file ID.
+EDA scripts run inside `test_runner.py` with `conn` and `pairs = ["GBPUSD"]` injected into the script namespace. Use `conn.execute(...)` against the preloaded `GBPUSD` view instead of opening a fresh DuckDB connection. EDA and backtest restore or build an exact-window local shard stage before the container runs, while daily eval keeps a separate ephemeral stage so out-of-sample data never becomes restorable by dev workflows. The EDA workflow copies only the first non-empty log line into `research_summary.md`, and a committed `research/<file_id>.log` causes future `/run-eda <file_id>` attempts to be skipped, so retries need a new file ID.
 
 ---
 
@@ -239,7 +241,7 @@ For SQL and EDA code, query only the preloaded `GBPUSD` view via `conn.execute(.
 
 ## 7. Running a backtest manually
 
-The `run_backtest.yml` workflow runs `strategy.py` inside the infra-managed `strategy-runner` container image published from `FXQuantBench/infra`, writes `result.json`, and commits it to the leaderboard.
+The `run_backtest.yml` workflow runs `strategy.py` inside the infra-managed `strategy-runner` container image published from `FXQuantBench/infra`, writes `result.json`, and commits it to the leaderboard. Before the container starts, the reusable workflow restores or stages the exact in-sample GBPUSD parquet shards locally and mounts them as `/input/*.parquet`, using the fixed in-sample cache namespace rather than DuckDB remote Hugging Face reads.
 
 By default the workflows pull `ghcr.io/fxquantbench/strategy-runner:latest`. If you set `STRATEGY_RUNNER_IMAGE`, the EDA, backtest, and daily eval workflows use that image reference instead. This is the preferred way to pin the benchmark runtime to a versioned image tag or digest.
 

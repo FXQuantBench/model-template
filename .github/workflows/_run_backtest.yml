@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
+      INSAMPLE_CACHE_NAMESPACE: 'gbpusd-insample-v1'
       RUNNER_IMAGE: ${{ inputs.runner_image }}
 
     steps:
@@ -104,6 +105,137 @@ jobs:
 
           echo "RUNNER_IMAGE=$LOCAL_RUNNER_IMAGE" >> "$GITHUB_ENV"
 
+      - name: Compute in-sample cache metadata
+        id: insample_cache_metadata
+        run: |
+          STAGE_DIR="$RUNNER_TEMP/insample_input"
+          mkdir -p "$STAGE_DIR"
+          echo "stage_dir=$STAGE_DIR" >> "$GITHUB_OUTPUT"
+          echo "cache_key=${{ env.INSAMPLE_CACHE_NAMESPACE }}-${{ runner.os }}-${{ inputs.in_sample_start }}-${{ inputs.in_sample_end }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore in-sample shard cache
+        id: restore_insample_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
+          key: ${{ steps.insample_cache_metadata.outputs.cache_key }}
+
+      - name: Verify staged in-sample shards
+        id: verify_insample_cache
+        env:
+          IN_SAMPLE_START: ${{ inputs.in_sample_start }}
+          IN_SAMPLE_END: ${{ inputs.in_sample_end }}
+          STAGE_DIR: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          from datetime import date, timedelta
+          from pathlib import Path
+
+          start = date.fromisoformat(os.environ["IN_SAMPLE_START"])
+          end = date.fromisoformat(os.environ["IN_SAMPLE_END"])
+          stage_dir = Path(os.environ["STAGE_DIR"])
+
+          expected = []
+          day = start
+          while day < end:
+              expected.append(f"ticks_{day.isoformat()}.parquet")
+              day += timedelta(days=1)
+
+          expected_set = set(expected)
+          actual = sorted(path.name for path in stage_dir.glob("*.parquet"))
+          missing = [name for name in expected if name not in expected_set.intersection(actual)]
+          unexpected = [name for name in actual if name not in expected_set]
+          cache_complete = not missing and not unexpected
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"expected_count={len(expected)}\n")
+              fh.write(f"cache_complete={'true' if cache_complete else 'false'}\n")
+
+          print(
+              f"Staged shard check: expected={len(expected)} actual={len(actual)} "
+              f"missing={len(missing)} unexpected={len(unexpected)}"
+          )
+          for name in missing:
+              print(f"Missing shard: {name}")
+          for name in unexpected:
+              print(f"Unexpected shard: {name}")
+          PYEOF
+
+      - name: Stage in-sample shards locally
+        if: steps.verify_insample_cache.outputs.cache_complete != 'true'
+        env:
+          HF_TOKEN_RO: ${{ secrets.HF_TOKEN_RO }}
+          IN_SAMPLE_START: ${{ inputs.in_sample_start }}
+          IN_SAMPLE_END: ${{ inputs.in_sample_end }}
+          STAGE_DIR: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check huggingface_hub
+          python3 - <<'PYEOF'
+          import os
+          import shutil
+          from datetime import date, timedelta
+          from pathlib import Path
+
+          from huggingface_hub import hf_hub_download
+
+          start = date.fromisoformat(os.environ["IN_SAMPLE_START"])
+          end = date.fromisoformat(os.environ["IN_SAMPLE_END"])
+          stage_dir = Path(os.environ["STAGE_DIR"])
+          stage_dir.mkdir(parents=True, exist_ok=True)
+
+          expected = {}
+          day = start
+          while day < end:
+              local_name = f"ticks_{day.isoformat()}.parquet"
+              expected[local_name] = f"GBPUSD/{day:%Y/%m/%d}/{local_name}"
+              day += timedelta(days=1)
+
+          for path in stage_dir.glob("*.parquet"):
+              if path.name not in expected:
+                  path.unlink()
+                  print(f"Removed unexpected shard {path.name}")
+
+          token = os.environ["HF_TOKEN_RO"]
+          if expected and not token:
+              raise RuntimeError("HF_TOKEN_RO is required to stage in-sample shards.")
+
+          downloaded = 0
+          for local_name, repo_filename in expected.items():
+              target_path = stage_dir / local_name
+              if target_path.exists():
+                  continue
+              cached_path = Path(
+                  hf_hub_download(
+                      repo_id="FXQuantBench/fx-ticks",
+                      repo_type="dataset",
+                      filename=repo_filename,
+                      token=token,
+                  )
+              )
+              shutil.copyfile(cached_path, target_path)
+              print(f"Staged {repo_filename} -> {target_path}")
+              downloaded += 1
+
+          manifest_path = stage_dir / "manifest.txt"
+          manifest_path.write_text(
+              "".join(f"{name}\n" for name in sorted(expected)),
+              encoding="utf-8",
+          )
+          print(
+              f"Ready: expected={len(expected)} downloaded={downloaded} stage_dir={stage_dir}"
+          )
+          PYEOF
+          chmod -R a+rX "$STAGE_DIR"
+          ls -lah "$STAGE_DIR"
+
+      - name: Save in-sample shard cache
+        if: steps.restore_insample_cache.outputs.cache-hit != 'true' && steps.verify_insample_cache.outputs.expected_count != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
+          key: ${{ steps.insample_cache_metadata.outputs.cache_key }}
+
       - name: Run backtest container
         run: |
           mkdir -p "$RUNNER_TEMP/backtest_output"
@@ -120,7 +252,9 @@ jobs:
             -e MODEL_ID="${{ inputs.model_id }}" \
             -e OUTPUT_DIR="/output" \
             -e STRATEGY_SHA="${{ steps.run_id.outputs.strategy_sha }}" \
+            -e TICK_DATA_GLOB="/input/*.parquet" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
+            -v "${{ steps.insample_cache_metadata.outputs.stage_dir }}:/input:ro" \
             -v "$RUNNER_TEMP/backtest_output:/output" \
             "$RUNNER_IMAGE" \
             python /sandbox/test_runner.py

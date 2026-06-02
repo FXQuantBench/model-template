@@ -29,6 +29,7 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     env:
+      EVAL_STAGE_ISOLATION: 'ephemeral_only'
       GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
       RUNNER_IMAGE: ${{ inputs.runner_image }}
       SKIP_JOB: 'false'
@@ -203,7 +204,7 @@ jobs:
           echo "Issue opened for missing shard(s) in window ${WINDOW_START}→${EVAL_DATE}. Exiting."
           exit 1
 
-      - name: Stage eval shards locally
+      - name: Stage eval shards locally (ephemeral only)
         if: env.SKIP_JOB != 'true'
         env:
           HF_TOKEN_RO: ${{ secrets.HF_TOKEN_RO }}
@@ -211,6 +212,7 @@ jobs:
           WINDOW_START="${{ steps.date.outputs.window_start }}"
           WINDOW_END="${{ steps.date.outputs.window_end }}"
           STAGE_DIR="$RUNNER_TEMP/eval_input"
+          echo "Eval staging is ephemeral-only; no shared cache restore/save is allowed."
           mkdir -p "$STAGE_DIR"
           python3 - <<PYEOF
           import os

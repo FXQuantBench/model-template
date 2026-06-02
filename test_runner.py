@@ -216,7 +216,12 @@ def _create_view(conn: duckdb.DuckDBPyConnection, start_date: str, end_date: str
     try:
         conn.execute(f"""
             CREATE OR REPLACE VIEW GBPUSD AS
-            SELECT *
+            SELECT
+                timestamp_utc,
+                bid,
+                ask,
+                bid_volume,
+                ask_volume
             FROM read_parquet({dataset_source_sql})
             WHERE timestamp_utc >= {start_ms}
               AND timestamp_utc < {end_ms}
