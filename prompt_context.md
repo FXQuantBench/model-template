@@ -28,6 +28,49 @@ A DuckDB view named `GBPUSD` is pre-loaded for you. It contains only rows strict
 
 **Spread is a direct trade cost.** Every time a position is opened or closed, the bid/ask spread `(ask - bid)` is charged as a fraction of capital traded. There is no other commission. Design strategies with spread in mind.
 
+### 2.1 DuckDB Query and EDA Rules
+
+- Use the injected `conn` object for all benchmark queries. In EDA mode the runner executes `research/<file_id>.py` with `conn` and `pairs = ["GBPUSD"]` already defined in the script globals.
+- Do not open a fresh DuckDB connection with `duckdb.connect()` or `duckdb.query()` when you need benchmark data. A new connection will not have the preloaded `GBPUSD` view.
+- Query only the preloaded `GBPUSD` view. Do not call `read_parquet`, do not access HF/S3/local parquet paths directly from model-written code, and do not `CREATE OR REPLACE VIEW GBPUSD`.
+- The `GBPUSD` view is already filtered to `[IN_SAMPLE_START, IN_SAMPLE_END)` in both EDA and backtest mode.
+- `timestamp_utc` is Unix milliseconds (UTC). There is no seconds-based timestamp column.
+- There is no `pair` column in the `GBPUSD` SQL view. Add `pair = "GBPUSD"` only in the returned signal DataFrame.
+- If row order matters, always `ORDER BY timestamp_utc`.
+- Prefer pandas after `.df()` for complex datetime features instead of guessing DuckDB timestamp helper syntax.
+
+**Safe query examples:**
+
+```python
+sample = conn.execute("""
+  SELECT
+    timestamp_utc,
+    bid,
+    ask,
+    (bid + ask) / 2.0 AS mid,
+    ask - bid AS spread
+  FROM GBPUSD
+  ORDER BY timestamp_utc
+  LIMIT 10
+""").df()
+print("sample_ticks: first 10 ordered ticks")
+print(sample.to_string(index=False))
+
+minute_stats = conn.execute("""
+  SELECT
+    timestamp_utc - (timestamp_utc % 60000) AS minute_bucket_utc_ms,
+    COUNT(*) AS tick_count,
+    AVG((bid + ask) / 2.0) AS avg_mid,
+    AVG(ask - bid) AS avg_spread
+  FROM GBPUSD
+  GROUP BY 1
+  ORDER BY 1
+  LIMIT 20
+""").df()
+print("minute_stats: 20 minute buckets")
+print(minute_stats.to_string(index=False))
+```
+
 ---
 
 ## 3. `run()` Contract
@@ -68,7 +111,7 @@ An empty DataFrame (correct columns, zero rows) is valid and means "flat / no po
 | File | Access | Description |
 |---|---|---|
 | `strategy.py` | **R/W** | Your primary strategy implementation |
-| `research/*.py` | **R/W** | EDA scripts; each runs in isolation via `/run-eda <file_id>` |
+| `research/*.py` | **R/W** | EDA scripts; each runs in isolation via `/run-eda <file_id>` with injected `conn` and `pairs` globals |
 | `research_summary.md` | **R/W** | Fill `Hypothesis` before each EDA run; fill `Verdict` after seeing results |
 | `thoughts.md` | **R/W** (via `audit_logs/thoughts.md`) | Update with reasoning before every run command |
 | `releases.md` | **R/W** | Add a `[vN]` entry before every `/submit-pr` command |
@@ -77,7 +120,23 @@ An empty DataFrame (correct columns, zero rows) is valid and means "flat / no po
 
 ---
 
-## 5. Required Response Format
+## 5. Workflow and Iteration Budget
+
+`agentic_loop.yml` is the parent workflow. It builds the context, calls the model, applies `file_changes`, commits to `dev`, and dispatches at most one child workflow command.
+
+`run_eda.yml` and `run_backtest.yml` are child workflows. Each child workflow redispatches `agentic_loop.yml` when it finishes, so the loop resumes automatically after EDA/backtest.
+
+Every parent loop iteration consumes one unit from `MAX_DAILY_ITERATIONS`. Manual `workflow_dispatch` runs must respect the 30-minute gap, but child-workflow resumes bypass that guard while still counting against the daily limit.
+
+Only the first valid command in `commands` is executed. Because iterations are budgeted, avoid low-value environment-probing EDA scripts when the contract is already documented here.
+
+EDA scripts run in isolation. Always print a concise first non-empty line that states the key result, because the workflow copies only the first non-empty line of `research/<file_id>.log` into `research_summary.md`.
+
+`/run-eda <file_id>` is skipped if `research/<file_id>.log` already exists on `dev`. If you need to retry an EDA after any committed log, create a new script with a new `file_id`.
+
+---
+
+## 6. Required Response Format
 
 You must respond with a single JSON object and nothing else:
 
@@ -105,7 +164,7 @@ You must respond with a single JSON object and nothing else:
 
 ---
 
-## 6. Rules
+## 7. Rules
 
 1. **Update `audit_logs/thoughts.md` before every run command.** Include `thoughts.md` in `file_changes` with a new `## YYYY-MM-DD HH:MM — <EDA|Backtest|PR>` entry. If `thoughts.md` was not modified in the latest commit, `run_eda` and `run_backtest` will exit with an error.
 
@@ -116,3 +175,5 @@ You must respond with a single JSON object and nothing else:
 4. **Never attempt to write `test_runner.py` or `prompt_context.md`.** Writes to these files are silently dropped and will not take effect.
 
 5. **One command per iteration.** Only the first valid command in the `commands` array is dispatched.
+
+6. **EDA output must be informative immediately.** Print a concise first non-empty line that states the key result before any large tables. If an EDA attempt needs a retry after any committed log, use a new `file_id`.

@@ -16,7 +16,7 @@ jobs:
       MODEL_ID: ${{ vars.MODEL_ID }}
       MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}
       MODEL_BASE_URL: ${{ vars.MODEL_BASE_URL }}
-      MAX_DAILY_ITERATIONS: ${{ vars.MAX_DAILY_ITERATIONS || '20' }}
+      MAX_DAILY_ITERATIONS: ${{ vars.MAX_DAILY_ITERATIONS || '50' }}
       GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
 
     steps:

@@ -11,6 +11,14 @@ on:
         description: "EDA script ID (runs research/<file_id>.py)"
         required: true
         type: string
+      in_sample_start:
+        description: "Inclusive in-sample start date for the preloaded GBPUSD view"
+        required: true
+        type: string
+      in_sample_end:
+        description: "Exclusive in-sample end date for the preloaded GBPUSD view"
+        required: true
+        type: string
       eda_archive_threshold:
         description: "Archive oldest EDA files when count exceeds this threshold"
         required: false
@@ -31,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EDA_ARCHIVE_THRESHOLD: ${{ inputs.eda_archive_threshold }}
+      EDA_EMPTY_LOG: 'false'
       GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
       RUNNER_IMAGE: ${{ inputs.runner_image }}
       SKIP_JOB: 'false'
@@ -132,6 +141,8 @@ jobs:
             --rm \
             -e MODE=eda \
             -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
+            -e START_DATE="${{ inputs.in_sample_start }}" \
+            -e END_DATE="${{ inputs.in_sample_end }}" \
             -e EDA_SCRIPT="/sandbox/research/${{ inputs.file_id }}.py" \
             -e EDA_OUTPUT="/output/eda.log" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
@@ -154,6 +165,18 @@ jobs:
             truncate -s "$MAX_BYTES" "$LOG_PATH"
             echo "" >> "$LOG_PATH"
             echo "[output truncated at 5 MB]" >> "$LOG_PATH"
+          fi
+
+      - name: Guard — empty EDA log
+        if: env.SKIP_JOB != 'true'
+        run: |
+          LOG_PATH="$RUNNER_TEMP/eda_output/eda.log"
+          if ! grep -q '[^[:space:]]' "$LOG_PATH"; then
+            echo "EDA_EMPTY_LOG=true" >> "$GITHUB_ENV"
+            cat <<'EOF' > "$LOG_PATH"
+            ERROR: EDA script completed without printing any output.
+            Print a concise first-line result summary and use a new file_id for the next attempt.
+            EOF
           fi
 
       - name: Copy log to research/
@@ -207,3 +230,9 @@ jobs:
           git diff --cached --quiet && echo "No changes." || \
             git commit -m "eda: ${{ inputs.file_id }}"
           git push origin dev
+
+      - name: Fail workflow on empty EDA log
+        if: env.EDA_EMPTY_LOG == 'true'
+        run: |
+          echo "ERROR: EDA log was empty; wrote a sentinel log entry and failed the workflow intentionally."
+          exit 1

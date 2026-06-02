@@ -15,7 +15,6 @@ class TestBaselineStrategy:
         conn.execute("""
             CREATE VIEW GBPUSD AS
             SELECT 0::BIGINT AS timestamp_utc,
-                   'GBPUSD'  AS pair,
                    1.27      AS bid,
                    1.2701    AS ask,
                    1000.0    AS bid_volume,

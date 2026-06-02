@@ -539,6 +539,51 @@ class TestEDAMode:
             assert "DuckDBPyConnection" in text
             assert "GBPUSD" in text
 
+    def test_injected_conn_can_query_precreated_gbpusd_view(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parquet_dir = Path(tmpdir) / "ticks"
+            parquet_dir.mkdir()
+            parquet_path = parquet_dir / "ticks_2024-01-01.parquet"
+            output = Path(tmpdir) / "eda.log"
+            script = Path(tmpdir) / "eda_view.py"
+
+            builder = duckdb.connect()
+            builder.execute("""
+                CREATE TABLE raw_ticks (
+                    timestamp_utc BIGINT,
+                    bid           DOUBLE,
+                    ask           DOUBLE,
+                    bid_volume    DOUBLE,
+                    ask_volume    DOUBLE
+                )
+            """)
+            builder.execute(f"""
+                INSERT INTO raw_ticks VALUES
+                  ({_ms_from_date('2024-01-01') + 1000}, 1.27, 1.2701, 1000, 1000)
+            """)
+            builder.execute(f"COPY raw_ticks TO '{parquet_path.as_posix()}' (FORMAT PARQUET)")
+            builder.close()
+
+            script.write_text(
+                "rows = conn.execute(\"SELECT COUNT(*) FROM GBPUSD\").fetchone()[0]\n"
+                "print(f'rows={rows}')\n"
+                "sample = conn.execute(\"SELECT timestamp_utc, bid, ask FROM GBPUSD ORDER BY timestamp_utc LIMIT 1\").df()\n"
+                "print(sample.to_string(index=False))\n"
+            )
+
+            conn = duckdb.connect()
+            with patch.dict(os.environ, {
+                LOCAL_DATASET_GLOB_ENV: f"{parquet_dir.as_posix()}/*.parquet",
+                "EDA_SCRIPT": str(script),
+                "EDA_OUTPUT": str(output),
+            }, clear=False):
+                test_runner._create_view(conn, "2024-01-01", "2024-01-02")
+                test_runner.run_eda(conn)
+
+            text = output.read_text()
+            assert "rows=1" in text
+            assert "timestamp_utc" in text
+
     def test_main_guarded_script_executes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             script = Path(tmpdir) / "eda_main.py"

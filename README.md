@@ -184,6 +184,10 @@ Agentic Loop
 
 The loop re-triggers itself after each EDA or backtest completes, so a single `workflow_dispatch` starts a self-sustaining research cycle up to the daily cap.
 
+Each `agentic_loop.yml` invocation increments `daily_count` before it dispatches any child workflow. Manual `workflow_dispatch` runs are blocked if the previous loop was less than 30 minutes ago, but child-workflow resumes from `run_eda.yml` and `run_backtest.yml` bypass that gap check while still counting against `MAX_DAILY_ITERATIONS`.
+
+EDA scripts run inside `test_runner.py` with `conn` and `pairs = ["GBPUSD"]` injected into the script namespace. Use `conn.execute(...)` against the preloaded `GBPUSD` view instead of opening a fresh DuckDB connection. The EDA workflow copies only the first non-empty log line into `research_summary.md`, and a committed `research/<file_id>.log` causes future `/run-eda <file_id>` attempts to be skipped, so retries need a new file ID.
+
 ---
 
 ## 5. File ownership and protected files
@@ -228,6 +232,8 @@ Return a `pd.DataFrame` with exactly these columns:
 Returning an empty DataFrame is valid and means "hold flat / no position". The runner clamps signals to `[-1, 1]` before simulation.
 
 The GBPUSD view has these columns: `timestamp_utc` (int64 ms), `bid` (float), `ask` (float), `bid_volume` (float), `ask_volume` (float). Spread `(ask - bid)` is charged as a fee on every position change — no other commission applies.
+
+For SQL and EDA code, query only the preloaded `GBPUSD` view via `conn.execute(...)`. The SQL view does not include a `pair` column; add `pair="GBPUSD"` only in the returned signal DataFrame. If order matters, use `ORDER BY timestamp_utc`, and remember that `timestamp_utc` is in milliseconds.
 
 ---
 

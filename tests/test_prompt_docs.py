@@ -1,0 +1,108 @@
+"""Regression tests for prompt/docs/workflow guidance that steers the agent loop."""
+
+import duckdb
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read(relative_path: str) -> str:
+    return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+class TestPromptContextGuidance:
+    def test_mentions_loop_budget_and_resume_flow(self):
+        text = _read("prompt_context.md")
+        assert "MAX_DAILY_ITERATIONS" in text
+        assert "run_eda.yml" in text
+        assert "run_backtest.yml" in text
+        assert "first non-empty line" in text
+        assert "new `file_id`" in text
+
+    def test_mentions_injected_conn_and_gbpusd_query_rules(self):
+        text = _read("prompt_context.md")
+        assert "Use the injected `conn` object" in text
+        assert "There is no `pair` column in the `GBPUSD` SQL view" in text
+        assert "Do not open a fresh DuckDB connection" in text
+        assert "The `GBPUSD` view is already filtered to `[IN_SAMPLE_START, IN_SAMPLE_END)`" in text
+
+    def test_documented_query_examples_execute_against_gbpusd_view(self):
+        text = _read("prompt_context.md")
+        assert "(bid + ask) / 2.0 AS mid" in text
+        assert "timestamp_utc - (timestamp_utc % 60000) AS minute_bucket_utc_ms" in text
+
+        conn = duckdb.connect()
+        conn.execute("""
+            CREATE VIEW GBPUSD AS
+            SELECT *
+            FROM (
+                VALUES
+                    (1704067201000::BIGINT, 1.2700::DOUBLE, 1.2702::DOUBLE, 1000.0::DOUBLE, 1200.0::DOUBLE),
+                    (1704067215000::BIGINT, 1.2701::DOUBLE, 1.2703::DOUBLE, 1100.0::DOUBLE, 1300.0::DOUBLE),
+                    (1704067261000::BIGINT, 1.2702::DOUBLE, 1.2704::DOUBLE, 1200.0::DOUBLE, 1400.0::DOUBLE)
+            ) AS ticks(timestamp_utc, bid, ask, bid_volume, ask_volume)
+        """)
+
+        sample = conn.execute(
+            """
+            SELECT
+              timestamp_utc,
+              bid,
+              ask,
+              (bid + ask) / 2.0 AS mid,
+              ask - bid AS spread
+            FROM GBPUSD
+            ORDER BY timestamp_utc
+            LIMIT 10
+            """
+        ).df()
+
+        minute_stats = conn.execute(
+            """
+            SELECT
+              timestamp_utc - (timestamp_utc % 60000) AS minute_bucket_utc_ms,
+              COUNT(*) AS tick_count,
+              AVG((bid + ask) / 2.0) AS avg_mid,
+              AVG(ask - bid) AS avg_spread
+            FROM GBPUSD
+            GROUP BY 1
+            ORDER BY 1
+            LIMIT 20
+            """
+        ).df()
+
+        assert len(sample) == 3
+        assert list(sample.columns) == ["timestamp_utc", "bid", "ask", "mid", "spread"]
+        assert len(minute_stats) == 2
+        assert list(minute_stats.columns) == [
+            "minute_bucket_utc_ms",
+            "tick_count",
+            "avg_mid",
+            "avg_spread",
+        ]
+
+
+class TestReadmeGuidance:
+    def test_mentions_daily_limit_and_eda_contract(self):
+        text = _read("README.md")
+        assert "MAX_DAILY_ITERATIONS" in text
+        assert "conn.execute(...)" in text
+        assert "first non-empty log line" in text
+        assert "new file ID" in text
+        assert "does not include a `pair` column" in text
+
+
+class TestEDAWorkflowGuidance:
+    def test_wrapper_passes_in_sample_window(self):
+        text = _read(".github/workflows/run_eda.yml")
+        assert "in_sample_start: ${{ vars.IN_SAMPLE_START }}" in text
+        assert "in_sample_end: ${{ vars.IN_SAMPLE_END }}" in text
+
+    def test_reusable_workflow_preloads_view_and_flags_empty_logs(self):
+        text = _read(".github/workflows/_run_eda.yml")
+        assert "-e START_DATE=\"${{ inputs.in_sample_start }}\"" in text
+        assert "-e END_DATE=\"${{ inputs.in_sample_end }}\"" in text
+        assert "EDA_EMPTY_LOG: 'false'" in text
+        assert "Fail workflow on empty EDA log" in text
