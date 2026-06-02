@@ -31,7 +31,9 @@ from test_runner import (
     HF_DATASET_GLOB,
     LOCAL_DATASET_GLOB_ENV,
     ResultSchema,
+    _hf_day_parquet_path,
     _ms_from_date,
+    _remote_tick_data_paths,
     _tick_data_glob,
     _validate_signals,
 )
@@ -62,6 +64,19 @@ class TestMsFromDate:
 class TestHFDatasetGlob:
     def test_uses_nested_gbpusd_hf_layout(self):
         assert HF_DATASET_GLOB == "s3://datasets/FXQuantBench/fx-ticks/GBPUSD/*/*/*/*.parquet"
+
+
+class TestHFDayParquetPaths:
+    def test_formats_single_day_path(self):
+        assert _hf_day_parquet_path(datetime(2024, 1, 2).date()) == (
+            "s3://datasets/FXQuantBench/fx-ticks/GBPUSD/2024/01/02/ticks_2024-01-02.parquet"
+        )
+
+    def test_builds_exclusive_end_window(self):
+        assert _remote_tick_data_paths("2024-01-01", "2024-01-03") == [
+            "s3://datasets/FXQuantBench/fx-ticks/GBPUSD/2024/01/01/ticks_2024-01-01.parquet",
+            "s3://datasets/FXQuantBench/fx-ticks/GBPUSD/2024/01/02/ticks_2024-01-02.parquet",
+        ]
 
 
 class TestTickDataSourceSelection:
@@ -152,21 +167,20 @@ class TestCreateView:
     def test_empty_window_returns_zero_rows(self):
         """A window where start == end must return no rows."""
         conn = duckdb.connect()
-        ms = _ms_from_date("2024-01-01")
-        conn.execute("""
-            CREATE TABLE raw_ticks (
-                timestamp_utc BIGINT,
-                bid DOUBLE, ask DOUBLE, bid_volume DOUBLE, ask_volume DOUBLE
-            )
-        """)
-        conn.execute(f"INSERT INTO raw_ticks VALUES ({ms}, 1.27, 1.2701, 1000, 1000)")
-        conn.execute(f"""
-            CREATE OR REPLACE VIEW GBPUSD AS
-            SELECT * FROM raw_ticks
-            WHERE timestamp_utc >= {ms}
-              AND timestamp_utc <  {ms}
-        """)
+        test_runner._create_view(conn, "2024-01-01", "2024-01-01")
         assert conn.execute("SELECT COUNT(*) FROM GBPUSD").fetchone()[0] == 0
+
+    def test_create_view_uses_explicit_remote_day_paths(self):
+        conn = MagicMock()
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(LOCAL_DATASET_GLOB_ENV, None)
+            test_runner._create_view(conn, "2024-01-01", "2024-01-03")
+
+        sql = conn.execute.call_args.args[0]
+        assert "ticks_2024-01-01.parquet" in sql
+        assert "ticks_2024-01-02.parquet" in sql
+        assert HF_DATASET_GLOB not in sql
 
     def test_create_view_reads_from_local_override_glob(self):
         conn = duckdb.connect()

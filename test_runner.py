@@ -25,7 +25,7 @@ import signal
 import sys
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -136,10 +136,31 @@ def _sql_string_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _sql_string_list_literal(values: list[str]) -> str:
+    return "[" + ", ".join(f"'{_sql_string_literal(value)}'" for value in values) + "]"
+
+
 def _ms_from_date(date_str: str) -> int:
     """Convert 'YYYY-MM-DD' to Unix milliseconds (midnight UTC)."""
     dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
+
+
+def _hf_day_parquet_path(day: date) -> str:
+    return f"{HF_DATASET_ROOT}/{day:%Y/%m/%d}/ticks_{day.isoformat()}.parquet"
+
+
+def _remote_tick_data_paths(start_date: str, end_date: str) -> list[str]:
+    window_start = date.fromisoformat(start_date)
+    window_end = date.fromisoformat(end_date)
+    paths: list[str] = []
+
+    day = window_start
+    while day < window_end:
+        paths.append(_hf_day_parquet_path(day))
+        day += timedelta(days=1)
+
+    return paths
 
 
 def _build_connection(hf_token: str) -> duckdb.DuckDBPyConnection:
@@ -170,12 +191,32 @@ def _create_view(conn: duckdb.DuckDBPyConnection, start_date: str, end_date: str
     """
     start_ms = _ms_from_date(start_date)
     end_ms = _ms_from_date(end_date)
-    dataset_glob = _tick_data_glob()
+
+    if start_ms >= end_ms:
+        conn.execute("""
+            CREATE OR REPLACE VIEW GBPUSD AS
+            SELECT
+                CAST(NULL AS BIGINT) AS timestamp_utc,
+                CAST(NULL AS DOUBLE) AS bid,
+                CAST(NULL AS DOUBLE) AS ask,
+                CAST(NULL AS DOUBLE) AS bid_volume,
+                CAST(NULL AS DOUBLE) AS ask_volume
+            WHERE 1 = 0
+        """)
+        return
+
+    if _using_local_tick_data():
+        dataset_source_sql = f"'{_sql_string_literal(_tick_data_glob())}'"
+    else:
+        dataset_source_sql = _sql_string_list_literal(
+            _remote_tick_data_paths(start_date, end_date)
+        )
+
     try:
         conn.execute(f"""
             CREATE OR REPLACE VIEW GBPUSD AS
             SELECT *
-            FROM read_parquet('{_sql_string_literal(dataset_glob)}')
+            FROM read_parquet({dataset_source_sql})
             WHERE timestamp_utc >= {start_ms}
               AND timestamp_utc < {end_ms}
         """)

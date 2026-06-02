@@ -99,6 +99,7 @@ class TestEDAWorkflowGuidance:
         text = _read(".github/workflows/run_eda.yml")
         assert "in_sample_start: ${{ vars.IN_SAMPLE_START }}" in text
         assert "in_sample_end: ${{ vars.IN_SAMPLE_END }}" in text
+        assert "if: ${{ needs.eda.result == 'success' }}" in text
 
     def test_reusable_workflow_preloads_view_and_flags_empty_logs(self):
         text = _read(".github/workflows/_run_eda.yml")
