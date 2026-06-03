@@ -94,6 +94,7 @@ class TestReadmeGuidance:
         assert "does not include a `pair` column" in text
         assert "fixed-window cache keyed by `IN_SAMPLE_START` and `IN_SAMPLE_END`" in text
         assert "Daily eval uses its own ephemeral stage directory" in text
+        assert "skip calendar days that have no published shard in the dataset" in text
 
 
 class TestEDAWorkflowGuidance:
@@ -125,9 +126,12 @@ class TestWorkflowDataStaging:
             assert "cache_key=${{ env.INSAMPLE_CACHE_NAMESPACE }}-${{ runner.os }}-${{ inputs.in_sample_start }}-${{ inputs.in_sample_end }}" in text
             assert "-e TICK_DATA_GLOB=\"/input/*.parquet\"" in text
             assert ":/input:ro" in text
+            assert "manifest.txt" in text
+            assert "HfFileSystem" in text
+            assert "Skipping unavailable shard day" in text
             assert 'repo_id="FXQuantBench/fx-ticks"' in text
             assert "Write in-sample stage summary" in text
-            assert "In-sample shard stage: cache_hit=${CACHE_HIT_VALUE} shard_count=${SHARD_COUNT}/${EXPECTED_COUNT} cache_complete=${CACHE_COMPLETE_VALUE}" in text
+            assert "In-sample shard stage: cache_hit=${CACHE_HIT_VALUE} shard_count=${SHARD_COUNT}/${EXPECTED_COUNT} skipped_missing_days=${SKIPPED_COUNT_VALUE} cache_complete=${CACHE_COMPLETE_VALUE}" in text
             assert '>> "$GITHUB_STEP_SUMMARY"' in text
 
     def test_daily_eval_stays_ephemeral_and_does_not_share_dev_cache(self):

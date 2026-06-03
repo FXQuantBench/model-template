@@ -152,24 +152,60 @@ jobs:
         if: env.SKIP_JOB != 'true'
         id: verify_insample_cache
         env:
+          HF_TOKEN_RO: ${{ secrets.HF_TOKEN_RO }}
           IN_SAMPLE_START: ${{ inputs.in_sample_start }}
           IN_SAMPLE_END: ${{ inputs.in_sample_end }}
           STAGE_DIR: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
         run: |
+          python3 -m pip install --quiet --disable-pip-version-check huggingface_hub
           python3 - <<'PYEOF'
           import os
           from datetime import date, timedelta
           from pathlib import Path
 
+          from huggingface_hub import HfFileSystem
+
           start = date.fromisoformat(os.environ["IN_SAMPLE_START"])
           end = date.fromisoformat(os.environ["IN_SAMPLE_END"])
           stage_dir = Path(os.environ["STAGE_DIR"])
+          manifest_path = stage_dir / "manifest.txt"
 
           expected = []
-          day = start
-          while day < end:
-            expected.append(f"ticks_{day.isoformat()}.parquet")
-            day += timedelta(days=1)
+          skipped = []
+          if manifest_path.exists():
+            expected = [
+              line.strip()
+              for line in manifest_path.read_text(encoding="utf-8").splitlines()
+              if line.strip()
+            ]
+          else:
+            token = os.environ["HF_TOKEN_RO"]
+            hffs = HfFileSystem(token=token)
+            day = start
+            while day < end:
+              local_name = f"ticks_{day.isoformat()}.parquet"
+              dataset_path = (
+                "datasets/FXQuantBench/fx-ticks/"
+                f"GBPUSD/{day:%Y/%m/%d}/{local_name}"
+              )
+              if hffs.exists(dataset_path):
+                expected.append(local_name)
+              else:
+                skipped.append(day.isoformat())
+                print(
+                  f"Skipping unavailable shard day {day.isoformat()}: {dataset_path}"
+                )
+              day += timedelta(days=1)
+
+            if not expected:
+              raise RuntimeError(
+                "No in-sample parquet shards were found for the requested window."
+              )
+
+            manifest_path.write_text(
+              "".join(f"{name}\n" for name in expected),
+              encoding="utf-8",
+            )
 
           expected_set = set(expected)
           actual = sorted(path.name for path in stage_dir.glob("*.parquet"))
@@ -179,11 +215,12 @@ jobs:
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
             fh.write(f"expected_count={len(expected)}\n")
+            fh.write(f"skipped_count={len(skipped)}\n")
             fh.write(f"cache_complete={'true' if cache_complete else 'false'}\n")
 
           print(
             f"Staged shard check: expected={len(expected)} actual={len(actual)} "
-            f"missing={len(missing)} unexpected={len(unexpected)}"
+            f"missing={len(missing)} unexpected={len(unexpected)} skipped={len(skipped)}"
           )
           for name in missing:
             print(f"Missing shard: {name}")
@@ -195,30 +232,41 @@ jobs:
         if: env.SKIP_JOB != 'true' && steps.verify_insample_cache.outputs.cache_complete != 'true'
         env:
           HF_TOKEN_RO: ${{ secrets.HF_TOKEN_RO }}
-          IN_SAMPLE_START: ${{ inputs.in_sample_start }}
-          IN_SAMPLE_END: ${{ inputs.in_sample_end }}
           STAGE_DIR: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
         run: |
-          python3 -m pip install --quiet --disable-pip-version-check huggingface_hub
           python3 - <<'PYEOF'
           import os
           import shutil
-          from datetime import date, timedelta
+          from datetime import date
           from pathlib import Path
 
           from huggingface_hub import hf_hub_download
 
-          start = date.fromisoformat(os.environ["IN_SAMPLE_START"])
-          end = date.fromisoformat(os.environ["IN_SAMPLE_END"])
           stage_dir = Path(os.environ["STAGE_DIR"])
           stage_dir.mkdir(parents=True, exist_ok=True)
+          manifest_path = stage_dir / "manifest.txt"
+
+          if not manifest_path.exists():
+            raise RuntimeError(
+              "Expected manifest.txt describing available in-sample shards."
+            )
+
+          expected_names = [
+            line.strip()
+            for line in manifest_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+          ]
+          if not expected_names:
+            raise RuntimeError(
+              "No in-sample parquet shards were resolved for the requested window."
+            )
 
           expected = {}
-          day = start
-          while day < end:
-            local_name = f"ticks_{day.isoformat()}.parquet"
+          for local_name in expected_names:
+            day = date.fromisoformat(
+              local_name.removeprefix("ticks_").removesuffix(".parquet")
+            )
             expected[local_name] = f"GBPUSD/{day:%Y/%m/%d}/{local_name}"
-            day += timedelta(days=1)
 
           for path in stage_dir.glob("*.parquet"):
             if path.name not in expected:
@@ -271,12 +319,14 @@ jobs:
           CACHE_COMPLETE: ${{ steps.verify_insample_cache.outputs.cache_complete }}
           CACHE_HIT: ${{ steps.restore_insample_cache.outputs.cache-hit }}
           EXPECTED_COUNT: ${{ steps.verify_insample_cache.outputs.expected_count }}
+          SKIPPED_COUNT: ${{ steps.verify_insample_cache.outputs.skipped_count }}
           STAGE_DIR: ${{ steps.insample_cache_metadata.outputs.stage_dir }}
         run: |
           SHARD_COUNT=$(find "$STAGE_DIR" -maxdepth 1 -name '*.parquet' | wc -l | tr -d ' ')
           CACHE_HIT_VALUE="${CACHE_HIT:-false}"
           CACHE_COMPLETE_VALUE="${CACHE_COMPLETE:-false}"
-          echo "In-sample shard stage: cache_hit=${CACHE_HIT_VALUE} shard_count=${SHARD_COUNT}/${EXPECTED_COUNT} cache_complete=${CACHE_COMPLETE_VALUE}" >> "$GITHUB_STEP_SUMMARY"
+          SKIPPED_COUNT_VALUE="${SKIPPED_COUNT:-0}"
+          echo "In-sample shard stage: cache_hit=${CACHE_HIT_VALUE} shard_count=${SHARD_COUNT}/${EXPECTED_COUNT} skipped_missing_days=${SKIPPED_COUNT_VALUE} cache_complete=${CACHE_COMPLETE_VALUE}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run EDA container
         if: env.SKIP_JOB != 'true'

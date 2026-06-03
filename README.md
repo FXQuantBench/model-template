@@ -135,7 +135,7 @@ The model receives the full `prompt_context.md` as the system prompt plus dynami
 
 `IN_SAMPLE_START` and `IN_SAMPLE_END` define the GBPUSD tick data window the model is allowed to train on. The runner enforces a strict `[start, end)` window — no data outside this range is accessible during EDA or backtest.
 
-EDA and backtest now stage the exact in-sample parquet day shards locally on the GitHub runner and pass them into the strategy-runner container via `TICK_DATA_GLOB=/input/*.parquet`. Those workflows may restore a fixed-window cache keyed by `IN_SAMPLE_START` and `IN_SAMPLE_END` to avoid re-downloading the same shards. Daily eval uses its own ephemeral stage directory and must not restore that in-sample cache.
+EDA and backtest now stage the available in-sample parquet day shards locally on the GitHub runner and pass them into the strategy-runner container via `TICK_DATA_GLOB=/input/*.parquet`. Those workflows may restore a fixed-window cache keyed by `IN_SAMPLE_START` and `IN_SAMPLE_END` to avoid re-downloading the same shards, and they skip calendar days that have no published shard in the dataset. Daily eval uses its own ephemeral stage directory and must not restore that in-sample cache.
 
 Choose dates that leave at least 6 months of unseen data for out-of-sample evaluation. The daily eval job tests `strategy.py` on yesterday's ticks (always outside the in-sample window).
 
