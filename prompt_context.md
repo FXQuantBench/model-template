@@ -124,7 +124,9 @@ An empty DataFrame (correct columns, zero rows) is valid and means "flat / no po
 
 `agentic_loop.yml` is the parent workflow. It builds the context, calls the model, applies `file_changes`, commits to `dev`, and dispatches at most one child workflow command.
 
-`run_eda.yml` and `run_backtest.yml` are child workflows. Each child workflow redispatches `agentic_loop.yml` when it finishes, so the loop resumes automatically after EDA/backtest.
+`run_eda.yml`, `run_backtest.yml`, and successful `daily_eval.yml` runs redispatch `agentic_loop.yml`, so the loop resumes automatically after EDA, backtest, and fresh daily eval results.
+
+The loop context includes the latest leaderboard summaries for both backtest results and eval results. When the trigger says `daily_eval`, inspect the latest eval summary before deciding whether more EDA, a backtest, or a PR is justified.
 
 Every parent loop iteration consumes one unit from `MAX_DAILY_ITERATIONS`. Manual `workflow_dispatch` runs must respect the 30-minute gap, but child-workflow resumes bypass that guard while still counting against the daily limit.
 

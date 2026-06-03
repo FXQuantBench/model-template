@@ -18,6 +18,8 @@ class TestPromptContextGuidance:
         assert "MAX_DAILY_ITERATIONS" in text
         assert "run_eda.yml" in text
         assert "run_backtest.yml" in text
+        assert "daily_eval.yml" in text
+        assert "latest leaderboard summaries for both backtest results and eval results" in text
         assert "first non-empty line" in text
         assert "new `file_id`" in text
 
@@ -95,6 +97,8 @@ class TestReadmeGuidance:
         assert "fixed-window cache keyed by `IN_SAMPLE_START` and `IN_SAMPLE_END`" in text
         assert "Daily eval uses its own ephemeral stage directory" in text
         assert "skip calendar days that have no published shard in the dataset" in text
+        assert "successful daily eval result is committed" in text
+        assert "latest leaderboard summaries for both backtest and eval runs" in text
 
 
 class TestEDAWorkflowGuidance:
@@ -110,6 +114,8 @@ class TestEDAWorkflowGuidance:
         assert "-e END_DATE=\"${{ inputs.in_sample_end }}\"" in text
         assert "EDA_EMPTY_LOG: 'false'" in text
         assert "Fail workflow on empty EDA log" in text
+        assert "printf '%s\\n'" in text
+        assert "cat <<'EOF'" not in text
 
 
 class TestWorkflowDataStaging:
@@ -141,3 +147,37 @@ class TestWorkflowDataStaging:
         assert "no shared cache restore/save is allowed" in text
         assert "actions/cache/restore@v4" not in text
         assert "actions/cache/save@v4" not in text
+
+
+class TestEvalLoopResume:
+    def test_daily_eval_wrapper_resumes_agent_loop_after_fresh_success(self):
+        text = _read(".github/workflows/daily_eval.yml")
+        assert "actions: write" in text
+        assert "resume_loop:" in text
+        assert "needs.eval.outputs.resume_loop == 'true'" in text
+        assert "Resume agent loop after eval" in text
+        assert "-f trigger_source=daily_eval" in text
+        assert "-f trigger_details=\"eval_date=${{ needs.eval.outputs.eval_date }}\"" in text
+
+    def test_reusable_daily_eval_exposes_resume_outputs(self):
+        text = _read(".github/workflows/_daily_eval.yml")
+        assert "outputs:" in text
+        assert "resume_loop:" in text
+        assert "value: ${{ jobs.eval.outputs.resume_loop }}" in text
+        assert "value: ${{ jobs.eval.outputs.eval_date }}" in text
+        assert "eval_date: ${{ steps.date.outputs.eval_date }}" in text
+        assert "id: resume_gate" in text
+        assert 'echo "resume_loop=false" >> "$GITHUB_OUTPUT"' in text
+        assert 'echo "resume_loop=true" >> "$GITHUB_OUTPUT"' in text
+
+    def test_agentic_loop_includes_eval_results_in_context(self):
+        text = _read(".github/workflows/agentic_loop.yml")
+        assert "workflow_dispatch:" in text
+        assert "trigger_source:" in text
+        assert "trigger_details:" in text
+        assert "model_results/${{ vars.MODEL_ID }}/results/${RESULT_TYPE}" in text
+        assert "fetch_summaries backtest" in text
+        assert "fetch_summaries eval" in text
+        assert "## Last 3 eval summaries" in text
+        assert "steps.leaderboard.outputs.eval_summaries" in text
+        assert "Trigger: child workflow ${TRIGGER_SOURCE}" in text

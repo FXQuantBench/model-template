@@ -20,6 +20,13 @@ on:
         required: false
         type: string
         default: "ghcr.io/fxquantbench/strategy-runner:latest"
+    outputs:
+      eval_date:
+        description: "Resolved eval date for this run"
+        value: ${{ jobs.eval.outputs.eval_date }}
+      resume_loop:
+        description: "Whether the caller should resume the agent loop"
+        value: ${{ jobs.eval.outputs.resume_loop }}
 
 permissions:
   contents: read
@@ -28,6 +35,9 @@ permissions:
 jobs:
   eval:
     runs-on: ubuntu-latest
+    outputs:
+      eval_date: ${{ steps.date.outputs.eval_date }}
+      resume_loop: ${{ steps.resume_gate.outputs.resume_loop }}
     env:
       EVAL_STAGE_ISOLATION: 'ephemeral_only'
       GH_TOKEN: ${{ secrets.BENCHMARK_BOT_TOKEN }}
@@ -81,6 +91,15 @@ jobs:
             >/dev/null 2>&1; then
             echo "Skipping: eval result for ${EVAL_DATE} already exists in leaderboard."
             echo "SKIP_JOB=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Decide whether to resume agent loop
+        id: resume_gate
+        run: |
+          if [ "$SKIP_JOB" = 'true' ]; then
+            echo "resume_loop=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "resume_loop=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Confirm HF shards exist for eval window

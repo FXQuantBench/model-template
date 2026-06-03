@@ -13,6 +13,7 @@ on:
 permissions:
   contents: read
   packages: read
+  actions: write
 
 jobs:
   eval:
@@ -24,4 +25,19 @@ jobs:
       model_id: ${{ vars.MODEL_ID }}
       eval_date: ${{ inputs.eval_date || '' }}
       runner_image: ${{ vars.STRATEGY_RUNNER_IMAGE || 'ghcr.io/fxquantbench/strategy-runner:latest' }}
+
+  resume_loop:
+    if: ${{ needs.eval.result == 'success' && needs.eval.outputs.resume_loop == 'true' }}
+    needs: eval
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resume agent loop after eval
+        run: |
+          gh workflow run agentic_loop.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f trigger_source=daily_eval \
+            -f trigger_details="eval_date=${{ needs.eval.outputs.eval_date }}"
 

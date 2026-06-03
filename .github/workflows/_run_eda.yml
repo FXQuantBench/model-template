@@ -373,10 +373,10 @@ jobs:
           LOG_PATH="$RUNNER_TEMP/eda_output/eda.log"
           if ! grep -q '[^[:space:]]' "$LOG_PATH"; then
             echo "EDA_EMPTY_LOG=true" >> "$GITHUB_ENV"
-            cat <<'EOF' > "$LOG_PATH"
-            ERROR: EDA script completed without printing any output.
-            Print a concise first-line result summary and use a new file_id for the next attempt.
-            EOF
+            printf '%s\n' \
+              'ERROR: EDA script completed without printing any output.' \
+              'Print a concise first-line result summary and use a new file_id for the next attempt.' \
+              > "$LOG_PATH"
           fi
 
       - name: Copy log to research/

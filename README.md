@@ -184,9 +184,11 @@ Agentic Loop
  └─ Update .github/loop_state.json (last_run, daily_count)
 ```
 
-The loop re-triggers itself after each EDA or backtest completes, so a single `workflow_dispatch` starts a self-sustaining research cycle up to the daily cap.
+The loop re-triggers itself after each EDA or backtest completes, and also after a successful daily eval result is committed, so a single `workflow_dispatch` starts a self-sustaining research cycle up to the daily cap while scheduled evals can feed fresh out-of-sample feedback back into the next agent turn.
 
-Each `agentic_loop.yml` invocation increments `daily_count` before it dispatches any child workflow. Manual `workflow_dispatch` runs are blocked if the previous loop was less than 30 minutes ago, but child-workflow resumes from `run_eda.yml` and `run_backtest.yml` bypass that gap check while still counting against `MAX_DAILY_ITERATIONS`.
+Each `agentic_loop.yml` invocation increments `daily_count` before it dispatches any child workflow. Manual `workflow_dispatch` runs are blocked if the previous loop was less than 30 minutes ago, but child-workflow resumes from `run_eda.yml`, `run_backtest.yml`, and successful `daily_eval.yml` runs bypass that gap check while still counting against `MAX_DAILY_ITERATIONS`.
+
+The loop context now includes the latest leaderboard summaries for both backtest and eval runs. After a scheduled daily eval resumes the loop, the agent can inspect the newest eval metrics directly from the injected context before choosing its next action.
 
 EDA scripts run inside `test_runner.py` with `conn` and `pairs = ["GBPUSD"]` injected into the script namespace. Use `conn.execute(...)` against the preloaded `GBPUSD` view instead of opening a fresh DuckDB connection. EDA and backtest restore or build an exact-window local shard stage before the container runs, while daily eval keeps a separate ephemeral stage so out-of-sample data never becomes restorable by dev workflows. The EDA workflow copies only the first non-empty log line into `research_summary.md`, and a committed `research/<file_id>.log` causes future `/run-eda <file_id>` attempts to be skipped, so retries need a new file ID.
 

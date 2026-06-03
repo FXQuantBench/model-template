@@ -2,6 +2,15 @@ name: Agentic Loop
 
 on:
   workflow_dispatch:
+    inputs:
+      trigger_source:
+        description: "Optional workflow or actor that resumed the loop"
+        required: false
+        type: string
+      trigger_details:
+        description: "Optional extra detail about the loop trigger"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -86,36 +95,56 @@ jobs:
           echo "ADJUSTED_COUNT=$DAILY_COUNT" >> "$GITHUB_ENV"
           echo "TODAY=$TODAY" >> "$GITHUB_ENV"
 
-      - name: Fetch last 3 backtest summaries from leaderboard
+      - name: Fetch latest leaderboard summaries
         if: env.SKIP_JOB != 'true'
         id: leaderboard
         run: |
-          SUMMARIES=""
-          if [ -n "${{ vars.MODEL_ID }}" ]; then
-            RAW=$(gh api "repos/fxquantbench/leaderboard/contents/${{ vars.MODEL_ID }}/results/backtest" \
-              --jq 'sort_by(.name) | reverse | .[0:3] | .[].download_url' 2>/dev/null || echo "")
-            if [ -n "$RAW" ]; then
-              while IFS= read -r URL; do
-                if [ -n "$URL" ]; then
-                  DATA=$(curl -sf "$URL" 2>/dev/null || echo "{}")
-                  SUMMARY=$(echo "$DATA" | python3 -c "
+          fetch_summaries() {
+            RESULT_TYPE="$1"
+            SUMMARIES=""
+            if [ -n "${{ vars.MODEL_ID }}" ]; then
+              RAW=$(gh api "repos/fxquantbench/leaderboard/contents/model_results/${{ vars.MODEL_ID }}/results/${RESULT_TYPE}" \
+                --jq 'sort_by(.name) | reverse | .[0:3] | .[].download_url' 2>/dev/null || echo "")
+              if [ -n "$RAW" ]; then
+                while IFS= read -r URL; do
+                  if [ -n "$URL" ]; then
+                    DATA=$(curl -sf "$URL" 2>/dev/null || echo "{}")
+                    SUMMARY=$(echo "$DATA" | python3 -c "
           import sys, json
           d = json.load(sys.stdin)
-          print(f\"run_id={d.get('run_id','?')} sharpe={d.get('sharpe','?')} mdd={d.get('max_drawdown','?')} win_rate={d.get('win_rate','?')}\")
+          print(f\"run_id={d.get('run_id','?')} mode={d.get('mode','?')} sharpe={d.get('sharpe','?')} mdd={d.get('max_drawdown','?')} win_rate={d.get('win_rate','?')}\")
           " 2>/dev/null || echo "$DATA")
-                  SUMMARIES="${SUMMARIES}${SUMMARY}"$'\n'
-                fi
-              done <<< "$RAW"
+                    SUMMARIES="${SUMMARIES}${SUMMARY}"$'\n'
+                  fi
+                done <<< "$RAW"
+              fi
             fi
-          fi
-          echo "summaries<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$SUMMARIES"     >> "$GITHUB_OUTPUT"
-          echo "EOF"            >> "$GITHUB_OUTPUT"
+            printf '%s' "$SUMMARIES"
+          }
+
+          BACKTEST_SUMMARIES=$(fetch_summaries backtest)
+          EVAL_SUMMARIES=$(fetch_summaries eval)
+
+          echo "backtest_summaries<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$BACKTEST_SUMMARIES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          echo "eval_summaries<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$EVAL_SUMMARIES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Build context file
         if: env.SKIP_JOB != 'true'
+        env:
+          TRIGGER_DETAILS: ${{ github.event.inputs.trigger_details || '' }}
+          TRIGGER_SOURCE: ${{ github.event.inputs.trigger_source || '' }}
         run: |
-          if [ "${{ github.actor }}" = "github-actions[bot]" ]; then
+          if [ -n "$TRIGGER_SOURCE" ]; then
+            TRIGGER_INFO="Trigger: child workflow ${TRIGGER_SOURCE}"
+            if [ -n "$TRIGGER_DETAILS" ]; then
+              TRIGGER_INFO="${TRIGGER_INFO} (${TRIGGER_DETAILS})"
+            fi
+          elif [ "${{ github.actor }}" = "github-actions[bot]" ]; then
             TRIGGER_INFO="Trigger: workflow_dispatch from child workflow"
           else
             TRIGGER_INFO="Trigger: manual workflow_dispatch"
@@ -140,7 +169,11 @@ jobs:
             echo ""
             echo "## Last 3 backtest summaries"
             echo ""
-            echo "${{ steps.leaderboard.outputs.summaries }}"
+            echo "${{ steps.leaderboard.outputs.backtest_summaries }}"
+            echo ""
+            echo "## Last 3 eval summaries"
+            echo ""
+            echo "${{ steps.leaderboard.outputs.eval_summaries }}"
             echo ""
             echo "## Trigger"
             echo ""
