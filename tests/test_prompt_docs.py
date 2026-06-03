@@ -28,6 +28,9 @@ class TestPromptContextGuidance:
         assert "Use the injected `conn` object" in text
         assert "There is no `pair` column in the `GBPUSD` SQL view" in text
         assert "Do not open a fresh DuckDB connection" in text
+        assert "Do not use module-level `duckdb.sql(...)`" in text
+        assert "Table with name GBPUSD does not exist" in text
+        assert "def main(conn): ..." in text
         assert "The `GBPUSD` view is already filtered to `[IN_SAMPLE_START, IN_SAMPLE_END)`" in text
 
     def test_documented_query_examples_execute_against_gbpusd_view(self):
@@ -99,6 +102,9 @@ class TestReadmeGuidance:
         assert "skip calendar days that have no published shard in the dataset" in text
         assert "successful daily eval result is committed" in text
         assert "latest leaderboard summaries for both backtest and eval runs" in text
+        assert "Do not use `duckdb.sql(...)` for benchmark queries" in text
+        assert "def main(conn): ..." in text
+        assert "scripts/check_hf_dataset_access.py" in text
 
 
 class TestEDAWorkflowGuidance:

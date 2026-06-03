@@ -1,9 +1,12 @@
 """Real connectivity check for the Hugging Face dataset access paths used in this repo.
 
 Usage:
-    export HF_TOKEN_RO=...
     uv run --with duckdb --with huggingface_hub --with pyarrow --with fsspec --with pandas --with numpy \
         python scripts/check_hf_dataset_access.py --start-date 2024-01-01 --end-date 2024-01-03
+
+If `HF_TOKEN_RO` or `HF_TOKEN` is available, the script also exercises authenticated-only checks
+and DuckDB remote `s3://datasets/...` access. Without a token, it still validates the public
+local staging path and a real EDA script executed through `test_runner.py`.
 
 This script exercises the same real connection/query styles used by the workflows:
   - Hugging Face Hub auth (`HfApi.auth_check`)
@@ -12,18 +15,22 @@ This script exercises the same real connection/query styles used by the workflow
   - `hf_hub_download` staging to local parquet files
   - DuckDB remote `s3://datasets/...` access with the same S3 settings as `test_runner.py`
   - DuckDB local parquet-glob access over the staged files
+    - A real EDA script executed through `test_runner.py` using the injected `conn`
   - The prompt-documented DuckDB sample and minute-bucket queries
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shutil
 import sys
 import tempfile
+import types
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from textwrap import dedent
 
 import duckdb
 import pyarrow.dataset as ds
@@ -193,6 +200,118 @@ def _run_repo_queries(conn: duckdb.DuckDBPyConnection, verbose: bool) -> dict[st
     }
 
 
+def _load_test_runner_module():
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "test_runner.py"
+
+    def _exec_module():
+        spec = importlib.util.spec_from_file_location("_live_test_runner", module_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Unable to load {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    try:
+        return _exec_module()
+    except ModuleNotFoundError as exc:
+        if exc.name != "vectorbt":
+            raise
+
+        original_vectorbt = sys.modules.get("vectorbt")
+        sys.modules["vectorbt"] = types.ModuleType("vectorbt")
+        try:
+            return _exec_module()
+        finally:
+            if original_vectorbt is None:
+                sys.modules.pop("vectorbt", None)
+            else:
+                sys.modules["vectorbt"] = original_vectorbt
+
+
+def _run_real_eda_runner_check(
+    stage_dir: Path, start_date: str, end_date: str, verbose: bool
+) -> dict[str, int]:
+    test_runner = _load_test_runner_module()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        eda_script = tmp_path / "eda_real_query.py"
+        eda_output = tmp_path / "eda.log"
+
+        eda_script.write_text(
+            dedent(
+                '''
+                def main(conn):
+                    summary = conn.execute(
+                        """
+                        SELECT
+                          COUNT(*) AS row_count,
+                          MIN(timestamp_utc) AS min_ts,
+                          MAX(timestamp_utc) AS max_ts,
+                          AVG(ask - bid) AS avg_spread
+                        FROM GBPUSD
+                        """
+                    ).df()
+                    print("eda_conn_query_ok")
+                    print(summary.to_string(index=False))
+
+                    sample = conn.execute(
+                        """
+                        SELECT timestamp_utc, bid, ask
+                        FROM GBPUSD
+                        ORDER BY timestamp_utc
+                        LIMIT 3
+                        """
+                    ).df()
+                    print(sample.to_string(index=False))
+
+                if __name__ == "__main__":
+                    main(conn)
+                '''
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        env_updates = {
+            "MODE": "eda",
+            "START_DATE": start_date,
+            "END_DATE": end_date,
+            "TICK_DATA_GLOB": f"{stage_dir.as_posix()}/*.parquet",
+            "EDA_SCRIPT": str(eda_script),
+            "EDA_OUTPUT": str(eda_output),
+        }
+        previous_env = {key: os.environ.get(key) for key in env_updates}
+
+        conn = duckdb.connect()
+        try:
+            os.environ.update(env_updates)
+            test_runner._create_view(conn, start_date, end_date)
+            test_runner.run_eda(conn)
+        finally:
+            conn.close()
+            for key, value in previous_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        log_text = eda_output.read_text(encoding="utf-8") if eda_output.exists() else ""
+        if "eda_conn_query_ok" not in log_text:
+            raise RuntimeError(f"EDA log missing success marker: {log_text!r}")
+        if "Table with name GBPUSD does not exist" in log_text:
+            raise RuntimeError(f"EDA log hit missing GBPUSD view error: {log_text!r}")
+
+        if verbose:
+            _log("EDA runner log:")
+            _log(log_text)
+
+        return {
+            "log_lines": len([line for line in log_text.splitlines() if line.strip()]),
+        }
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run real HF dataset connectivity and query checks for this repo."
@@ -222,6 +341,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print the DuckDB sample and minute-bucket query results.",
     )
+    parser.add_argument(
+        "--skip-remote-s3",
+        action="store_true",
+        help="Skip the DuckDB remote s3://datasets/... check and validate only the staged local path.",
+    )
     return parser.parse_args()
 
 
@@ -229,11 +353,6 @@ def main() -> int:
     args = _parse_args()
 
     token = os.environ.get(args.token_env) or os.environ.get("HF_TOKEN", "")
-    if not token:
-        _fail(
-            f"No Hugging Face token found. Set {args.token_env} or HF_TOKEN before running this script."
-        )
-        return 2
 
     days = _iter_days(args.start_date, args.end_date)
     if not days:
@@ -244,6 +363,10 @@ def main() -> int:
         "[INFO] Testing HF dataset access for "
         f"{args.start_date} -> {args.end_date} ({len(days)} day(s)) using {args.token_env if os.environ.get(args.token_env) else 'HF_TOKEN'}"
     )
+    if not token:
+        _log(
+            "[INFO] No HF token found; skipping authenticated-only checks and remote DuckDB S3 access."
+        )
 
     hf_fs_paths = [_hf_fs_day_path(day) for day in days]
     hf_s3_paths = [_hf_s3_day_path(day) for day in days]
@@ -253,18 +376,22 @@ def main() -> int:
     temp_dir: tempfile.TemporaryDirectory[str] | None = None
     remote_stats: dict[str, int] | None = None
     local_stats: dict[str, int] | None = None
+    eda_runner_stats: dict[str, int] | None = None
 
     try:
-        try:
-            api = HfApi(token=token)
-            api.auth_check(HF_REPO_ID, repo_type="dataset")
-            _ok(f"HfApi.auth_check succeeded for {HF_REPO_ID}")
-        except Exception as exc:  # noqa: BLE001
-            failures.append(("HfApi.auth_check", str(exc)))
-            _fail(f"HfApi.auth_check failed: {exc}")
+        if token:
+            try:
+                api = HfApi(token=token)
+                api.auth_check(HF_REPO_ID, repo_type="dataset")
+                _ok(f"HfApi.auth_check succeeded for {HF_REPO_ID}")
+            except Exception as exc:  # noqa: BLE001
+                failures.append(("HfApi.auth_check", str(exc)))
+                _fail(f"HfApi.auth_check failed: {exc}")
+        else:
+            _log("[INFO] Skipping HfApi.auth_check because no token was provided.")
 
         try:
-            hffs = HfFileSystem(token=token)
+            hffs = HfFileSystem(token=token or None)
             for hf_fs_path in hf_fs_paths:
                 if not hffs.exists(hf_fs_path):
                     raise RuntimeError(f"Missing HF shard: {hf_fs_path}")
@@ -317,7 +444,7 @@ def main() -> int:
                         repo_id=HF_REPO_ID,
                         repo_type="dataset",
                         filename=_hf_download_day_path(day),
-                        token=token,
+                        token=token or None,
                     )
                 )
                 target_path = stage_dir / cached_path.name
@@ -334,20 +461,25 @@ def main() -> int:
             _fail(f"hf_hub_download failed: {exc}")
             stage_dir = None
 
-        try:
-            remote_conn = _build_hf_duckdb_connection(token)
+        if args.skip_remote_s3:
+            _log("[INFO] Skipping DuckDB remote S3 access because --skip-remote-s3 was set.")
+        elif token:
             try:
-                _create_remote_view(remote_conn, args.start_date, args.end_date)
-                remote_stats = _run_repo_queries(remote_conn, args.verbose)
-            finally:
-                remote_conn.close()
-            _ok(
-                "DuckDB remote S3 access succeeded: "
-                f"rows={remote_stats['total_rows']} sample_rows={remote_stats['sample_rows']} minute_rows={remote_stats['minute_rows']}"
-            )
-        except Exception as exc:  # noqa: BLE001
-            failures.append(("DuckDB remote S3 access", str(exc)))
-            _fail(f"DuckDB remote S3 access failed: {exc}")
+                remote_conn = _build_hf_duckdb_connection(token)
+                try:
+                    _create_remote_view(remote_conn, args.start_date, args.end_date)
+                    remote_stats = _run_repo_queries(remote_conn, args.verbose)
+                finally:
+                    remote_conn.close()
+                _ok(
+                    "DuckDB remote S3 access succeeded: "
+                    f"rows={remote_stats['total_rows']} sample_rows={remote_stats['sample_rows']} minute_rows={remote_stats['minute_rows']}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(("DuckDB remote S3 access", str(exc)))
+                _fail(f"DuckDB remote S3 access failed: {exc}")
+        else:
+            _log("[INFO] Skipping DuckDB remote S3 access because no token was provided.")
 
         if stage_dir is not None:
             try:
@@ -365,6 +497,18 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 failures.append(("DuckDB local staged parquet access", str(exc)))
                 _fail(f"DuckDB local staged parquet access failed: {exc}")
+
+            try:
+                eda_runner_stats = _run_real_eda_runner_check(
+                    stage_dir, args.start_date, args.end_date, args.verbose
+                )
+                _ok(
+                    "test_runner EDA injected-conn access succeeded: "
+                    f"log_lines={eda_runner_stats['log_lines']}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                failures.append(("test_runner EDA injected-conn access", str(exc)))
+                _fail(f"test_runner EDA injected-conn access failed: {exc}")
 
         if remote_stats is not None and local_stats is not None:
             if local_stats != remote_stats:

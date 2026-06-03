@@ -32,12 +32,48 @@ A DuckDB view named `GBPUSD` is pre-loaded for you. It contains only rows strict
 
 - Use the injected `conn` object for all benchmark queries. In EDA mode the runner executes `research/<file_id>.py` with `conn` and `pairs = ["GBPUSD"]` already defined in the script globals.
 - Do not open a fresh DuckDB connection with `duckdb.connect()` or `duckdb.query()` when you need benchmark data. A new connection will not have the preloaded `GBPUSD` view.
+- Do not use module-level `duckdb.sql(...)`, `duckdb.query(...)`, or similar helpers for benchmark queries. Those use DuckDB's default connection, not the injected `conn`, so they commonly fail with `Catalog Error: Table with name GBPUSD does not exist!`.
 - Query only the preloaded `GBPUSD` view. Do not call `read_parquet`, do not access HF/S3/local parquet paths directly from model-written code, and do not `CREATE OR REPLACE VIEW GBPUSD`.
 - The `GBPUSD` view is already filtered to `[IN_SAMPLE_START, IN_SAMPLE_END)` in both EDA and backtest mode.
 - `timestamp_utc` is Unix milliseconds (UTC). There is no seconds-based timestamp column.
 - There is no `pair` column in the `GBPUSD` SQL view. Add `pair = "GBPUSD"` only in the returned signal DataFrame.
 - If row order matters, always `ORDER BY timestamp_utc`.
 - Prefer pandas after `.df()` for complex datetime features instead of guessing DuckDB timestamp helper syntax.
+
+If you wrap EDA logic in a helper, pass the injected connection through explicitly, for example `def main(conn): ...` and `main(conn)`. Do not define `main()` and then create a new DuckDB connection inside it.
+
+**Common anti-pattern that fails:**
+
+```python
+import duckdb
+
+def main():
+  conn = duckdb.connect()
+  sample = duckdb.sql("SELECT * FROM GBPUSD LIMIT 5").df()
+  print(sample)
+
+if __name__ == "__main__":
+  main()
+```
+
+The snippet above fails because both `duckdb.connect()` and `duckdb.sql(...)` ignore the injected benchmark connection.
+
+**Correct EDA pattern:**
+
+```python
+def main(conn):
+  sample = conn.execute("""
+    SELECT timestamp_utc, bid, ask
+    FROM GBPUSD
+    ORDER BY timestamp_utc
+    LIMIT 5
+  """).df()
+  print("sample_ticks")
+  print(sample.to_string(index=False))
+
+if __name__ == "__main__":
+  main(conn)
+```
 
 **Safe query examples:**
 

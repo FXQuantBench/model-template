@@ -642,6 +642,40 @@ class TestEDAMode:
             assert "rows=1" in text
             assert "timestamp_utc" in text
 
+    def test_duckdb_sql_default_connection_cannot_see_injected_gbpusd_view(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(tmpdir) / "eda_bad_duckdb_sql.py"
+            output = Path(tmpdir) / "eda.log"
+            script.write_text(
+                "import duckdb\n"
+                "try:\n"
+                "    duckdb.sql(\"SELECT COUNT(*) FROM GBPUSD\").fetchone()\n"
+                "except Exception as exc:\n"
+                "    print(type(exc).__name__)\n"
+                "    print(exc)\n"
+            )
+
+            conn = duckdb.connect()
+            conn.execute("""
+                CREATE OR REPLACE VIEW GBPUSD AS
+                SELECT
+                    1704067200000::BIGINT AS timestamp_utc,
+                    1.27::DOUBLE AS bid,
+                    1.2701::DOUBLE AS ask,
+                    1000.0::DOUBLE AS bid_volume,
+                    1000.0::DOUBLE AS ask_volume
+            """)
+
+            with patch.dict(os.environ, {
+                "EDA_SCRIPT": str(script),
+                "EDA_OUTPUT": str(output),
+            }):
+                test_runner.run_eda(conn)
+
+            text = output.read_text()
+            assert "CatalogException" in text or "Catalog Error" in text
+            assert "GBPUSD" in text
+
     def test_main_guarded_script_executes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             script = Path(tmpdir) / "eda_main.py"
