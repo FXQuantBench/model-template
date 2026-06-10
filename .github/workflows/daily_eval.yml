@@ -1,8 +1,6 @@
 name: Daily Eval
 
 on:
-  schedule:
-    - cron: '45 9 * * 2-6'
   workflow_dispatch:
     inputs:
       eval_date:
