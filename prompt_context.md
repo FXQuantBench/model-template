@@ -108,6 +108,14 @@ print("minute_stats: 20 minute buckets")
 print(minute_stats.to_string(index=False))
 ```
 
+## 2.2 Container Resource Limits
+
+Every EDA, backtest, and eval container runs using Github Actions with limits:
+
+- **Memory:** 4 GB RAM. Operations that materialise large DataFrames in memory will be killed.
+  Prefer chunked or aggregated DuckDB queries over `SELECT * FROM GBPUSD` into pandas.
+- **CPU:** 2 vCPUs. Parallelism beyond 2 threads will not help and may introduce scheduling overhead.
+
 ---
 
 ## 3. `run()` Contract

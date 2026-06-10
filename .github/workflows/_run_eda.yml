@@ -337,6 +337,7 @@ jobs:
             --memory=4g \
             --cpus=2 \
             --rm \
+            --workdir /output \
             -e MODE=eda \
             -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
             -e START_DATE="${{ inputs.in_sample_start }}" \

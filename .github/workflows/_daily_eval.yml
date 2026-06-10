@@ -328,6 +328,7 @@ jobs:
             --memory=4g \
             --cpus=2 \
             --rm \
+            --workdir /output \
             -e MODE=eval \
             -e HF_TOKEN="${{ secrets.HF_TOKEN_RO }}" \
             -e TICK_DATA_GLOB="/input/*.parquet" \
