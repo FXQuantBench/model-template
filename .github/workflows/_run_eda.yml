@@ -355,9 +355,35 @@ jobs:
             echo "ERROR: EDA runner completed without writing /output/eda.log."
             exit 1
           fi
+      - name: Capture EDA container failure
+        if: env.SKIP_JOB != 'true' && failure()
+        run: |
+          DOCKER_EXIT="${{ job.status }}"
+          # Check the actual exit — infer from whether log exists and job context
+          LOG="$RUNNER_TEMP/eda_output/eda.log"
+          STDERR="$RUNNER_TEMP/eda_output/eda.stderr"
+          mkdir -p "$RUNNER_TEMP/eda_output"
+
+          if [ ! -f "$LOG" ]; then
+            # Detect OOM: no log + no stderr usually means 137
+            STDERR_SIZE=$(stat -c%s "$STDERR" 2>/dev/null || echo 0)
+            if [ "$STDERR_SIZE" -lt 10 ]; then
+              printf '%s\n' \
+                "ERROR exit=137: OOM kill — container exceeded 4 GB memory limit." \
+                "Use aggregated DuckDB queries. Avoid SELECT * FROM GBPUSD into pandas." \
+                "Prefer GROUP BY/LIMIT queries. Call gc.collect() after large DataFrames." \
+                > "$LOG"
+            else
+              {
+                printf 'ERROR: EDA script raised an unhandled exception.\n'
+                printf '--- traceback (last 60 lines of stderr) ---\n'
+                tail -60 "$STDERR"
+              } > "$LOG"
+            fi
+          fi
 
       - name: Truncate log to 5 MB
-        if: env.SKIP_JOB != 'true'
+        if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
           LOG_PATH="$RUNNER_TEMP/eda_output/eda.log"
           MAX_BYTES=$(( 5 * 1024 * 1024 ))
@@ -369,7 +395,7 @@ jobs:
           fi
 
       - name: Guard — empty EDA log
-        if: env.SKIP_JOB != 'true'
+        if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
           LOG_PATH="$RUNNER_TEMP/eda_output/eda.log"
           if ! grep -q '[^[:space:]]' "$LOG_PATH"; then
@@ -381,13 +407,13 @@ jobs:
           fi
 
       - name: Copy log to research/
-        if: env.SKIP_JOB != 'true'
+        if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
           mkdir -p research
           cp "$RUNNER_TEMP/eda_output/eda.log" "research/${{ inputs.file_id }}.log"
 
       - name: Append row to research_summary.md
-        if: env.SKIP_JOB != 'true'
+        if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
           TODAY=$(python3 -c "from datetime import date; print(date.today().isoformat())")
           LOG="research/${{ inputs.file_id }}.log"

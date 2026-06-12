@@ -26,7 +26,7 @@ jobs:
       runner_image: ${{ vars.STRATEGY_RUNNER_IMAGE || 'ghcr.io/fxquantbench/strategy-runner:latest' }}
 
   resume_loop:
-    if: ${{ needs.eda.result == 'success' }}
+    if: ${{ needs.eda.result == 'success' || needs.eda.result == 'failure' }}
     needs: eda
     runs-on: ubuntu-latest
     env:
