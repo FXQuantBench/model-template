@@ -26,12 +26,18 @@ jobs:
       runner_image: ${{ vars.STRATEGY_RUNNER_IMAGE || 'ghcr.io/fxquantbench/strategy-runner:latest' }}
 
   resume_loop:
-    if: ${{ needs.eda.result == 'success' || needs.eda.result == 'failure' }}
     needs: eda
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ github.token }}
+
       - name: Resume agent loop
+        if: hashFiles(format('research/{0}.log', inputs.file_id)) != ''
         run: |
           gh workflow run agentic_loop.yml --repo "${{ github.repository }}" --ref main
