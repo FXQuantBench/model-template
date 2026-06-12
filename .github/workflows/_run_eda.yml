@@ -349,7 +349,7 @@ jobs:
             -v "${{ steps.insample_cache_metadata.outputs.stage_dir }}:/input:ro" \
             -v "$RUNNER_TEMP/eda_output:/output" \
             "$RUNNER_IMAGE" \
-            python /sandbox/test_runner.py
+            python /sandbox/test_runner.py \
             2>"$RUNNER_TEMP/eda_output/eda.stderr"
 
           if [ ! -f "$RUNNER_TEMP/eda_output/eda.log" ]; then
