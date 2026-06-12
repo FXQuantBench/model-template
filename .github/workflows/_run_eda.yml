@@ -356,34 +356,22 @@ jobs:
             echo "ERROR: EDA runner completed without writing /output/eda.log."
             exit 1
           fi
+          
       - name: Capture EDA container failure
         if: env.SKIP_JOB != 'true' && failure()
         run: |
-          DOCKER_EXIT="${{ job.status }}"
-          # Check the actual exit — infer from whether log exists and job context
           LOG="$RUNNER_TEMP/eda_output/eda.log"
           STDERR="$RUNNER_TEMP/eda_output/eda.stderr"
           mkdir -p "$RUNNER_TEMP/eda_output"
-
-          # Reclaim ownership of any root-owned files written by the container
           sudo chown "$USER" "$LOG" 2>/dev/null || true
 
-          if [ ! -f "$LOG" ]; then
-            # Detect OOM: no log + no stderr usually means 137
-            STDERR_SIZE=$(stat -c%s "$STDERR" 2>/dev/null || echo 0)
-            if [ "$STDERR_SIZE" -lt 10 ]; then
-              printf '%s\n' \
-                "ERROR exit=137: OOM kill — container exceeded 4 GB memory limit." \
-                "Use aggregated DuckDB queries. Avoid SELECT * FROM GBPUSD into pandas." \
-                "Prefer GROUP BY/LIMIT queries. Call gc.collect() after large DataFrames." \
-                > "$LOG"
-            else
-              {
-                printf 'ERROR: EDA script raised an unhandled exception.\n'
-                printf '--- traceback (last 60 lines of stderr) ---\n'
-                tail -60 "$STDERR"
-              } > "$LOG"
-            fi
+          LOG_SIZE=$(stat -c%s "$LOG" 2>/dev/null || echo 0)
+          if [ "$LOG_SIZE" -lt 10 ]; then
+            printf '%s\n' \
+              "ERROR exit=137: OOM kill — container exceeded 4 GB memory limit." \
+              "Use aggregated DuckDB queries. Avoid SELECT * FROM GBPUSD into pandas." \
+              "Prefer GROUP BY/LIMIT queries. Call gc.collect() after large DataFrames." \
+              > "$LOG"
           fi
 
       - name: Truncate log to 5 MB
