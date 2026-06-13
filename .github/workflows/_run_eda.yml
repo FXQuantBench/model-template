@@ -70,8 +70,12 @@ jobs:
         if: env.SKIP_JOB != 'true'
         run: |
           if ! git log --name-only --pretty="" -3 HEAD | grep -q "audit_logs/thoughts.md"; then
-            echo "ERROR: audit_logs/thoughts.md was not modified in the last 3 commits."
-            echo "Update thoughts.md with your reasoning before issuing /run-eda."
+            mkdir -p "$RUNNER_TEMP/eda_output"
+            printf '%s\n' \
+              "ERROR: audit_logs/thoughts.md was not updated in the last 3 commits." \
+              "You must update thoughts.md with your reasoning before calling /run-eda." \
+              "Fix: edit audit_logs/thoughts.md and commit it, then re-run." \
+              > "$RUNNER_TEMP/eda_output/eda.log"
             exit 1
           fi
 
