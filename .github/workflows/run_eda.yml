@@ -27,6 +27,7 @@ jobs:
 
   resume_loop:
     needs: eda
+    if: always()
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -38,6 +39,13 @@ jobs:
           token: ${{ github.token }}
 
       - name: Resume agent loop
-        if: hashFiles(format('research/{0}.log', inputs.file_id)) != ''
         run: |
-          gh workflow run agentic_loop.yml --repo "${{ github.repository }}" --ref main
+          if [ -f "research/${{ inputs.file_id }}.log" ]; then
+            gh workflow run agentic_loop.yml \
+              --repo "${{ github.repository }}" \
+              --ref main \
+              -f trigger_source=run_eda \
+              -f trigger_details="file_id=${{ inputs.file_id }}"
+          else
+            echo "Log not found — skipping agent loop resume."
+          fi
