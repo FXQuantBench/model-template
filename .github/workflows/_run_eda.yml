@@ -455,13 +455,13 @@ jobs:
           ls -lah research/*.log 2>/dev/null || echo "No .log files in research/"
           echo "=== [DEBUG] research/archive/ ==="
           ls -lah research/archive/*.log 2>/dev/null || echo "No .log files in research/archive/"
-          
+
       - name: Commit and push
         if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
           echo "=== [DEBUG] git status before add ==="
           git status --short research/
-          git add -A research/
+          git add research/
           git add research_summary.md
           echo "=== [DEBUG] git diff --cached (staged files) ==="
           git diff --cached --name-status
