@@ -334,6 +334,7 @@ jobs:
 
       - name: Run EDA container
         if: env.SKIP_JOB != 'true'
+        id: run_eda
         run: |
           mkdir -p "$RUNNER_TEMP/eda_output"
           chmod 0777 "$RUNNER_TEMP/eda_output"
@@ -362,7 +363,7 @@ jobs:
           fi
           
       - name: Capture EDA container failure
-        if: env.SKIP_JOB != 'true' && failure()
+        if: env.SKIP_JOB != 'true' && steps.run_eda.outcome == 'failure'
         run: |
           LOG="$RUNNER_TEMP/eda_output/eda.log"
           STDERR="$RUNNER_TEMP/eda_output/eda.stderr"
