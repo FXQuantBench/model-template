@@ -420,13 +420,17 @@ jobs:
           import os, pathlib, shutil
 
           threshold = int(os.environ.get("EDA_ARCHIVE_THRESHOLD", "30"))
+          current_id = "${{ inputs.file_id }}"
           research = pathlib.Path("research")
           archive  = research / "archive"
 
-          py_files = sorted(research.glob("*.py"), key=lambda p: p.stat().st_mtime)
+          py_files = sorted(
+              (p for p in research.glob("*.py") if p.stem != current_id),
+              key=lambda p: p.name   # sort by filename, not mtime — checkout resets mtime
+          )
           count = len(py_files)
 
-          if count > threshold:
+          if count >= threshold:
               archive.mkdir(parents=True, exist_ok=True)
               to_move = count - 10
               for py in py_files[:to_move]:
@@ -440,12 +444,13 @@ jobs:
       - name: Commit and push
         if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
+          # Stage everything under research/ — captures:
+          #   - new .log in research/ (or research/archive/ if moved)
+          #   - deletions from research/ after archive move
+          #   - additions in research/archive/
+          git add -A research/
+          git add -f research/*.log 2>/dev/null || true
           git add research_summary.md
-          git add -f "research/${{ inputs.file_id }}.log"
-          if [ -d research/archive ]; then
-            git add research/archive/
-            find research/archive -name '*.log' -print0 | xargs -0r git add -f --
-          fi
           git diff --cached --quiet && echo "No changes." || \
             git commit -m "eda: ${{ inputs.file_id }}"
           git push origin dev
