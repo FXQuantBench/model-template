@@ -449,7 +449,6 @@ jobs:
           #   - deletions from research/ after archive move
           #   - additions in research/archive/
           git add -A research/
-          git add -f research/*.log 2>/dev/null || true
           git add research_summary.md
           git diff --cached --quiet && echo "No changes." || \
             git commit -m "eda: ${{ inputs.file_id }}"
