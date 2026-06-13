@@ -455,8 +455,7 @@ jobs:
           ls -lah research/*.log 2>/dev/null || echo "No .log files in research/"
           echo "=== [DEBUG] research/archive/ ==="
           ls -lah research/archive/*.log 2>/dev/null || echo "No .log files in research/archive/"
-
-
+          
       - name: Commit and push
         if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
