@@ -409,6 +409,10 @@ jobs:
         run: |
           mkdir -p research
           cp "$RUNNER_TEMP/eda_output/eda.log" "research/${{ inputs.file_id }}.log"
+          echo "=== [DEBUG] research/ after copy ==="
+          ls -lah research/*.log 2>/dev/null || echo "No .log files in research/"
+          echo "=== [DEBUG] log content preview (first 5 lines) ==="
+          head -5 "research/${{ inputs.file_id }}.log" || echo "File not found"
 
       - name: Append row to research_summary.md
         if: env.SKIP_JOB != 'true' && (success() || failure())
@@ -420,7 +424,7 @@ jobs:
           echo "| ${{ inputs.file_id }} | $TODAY |  | $FIRST_LINE |  |" >> research_summary.md
 
       - name: Archive old EDA files if over threshold
-        if: env.SKIP_JOB != 'true'
+        if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
           python3 - <<'PYEOF'
           import os, pathlib, shutil
@@ -447,15 +451,21 @@ jobs:
                   print(f"Archived: {py.name}")
           PYEOF
 
+          echo "=== [DEBUG] research/ after archive ==="
+          ls -lah research/*.log 2>/dev/null || echo "No .log files in research/"
+          echo "=== [DEBUG] research/archive/ ==="
+          ls -lah research/archive/*.log 2>/dev/null || echo "No .log files in research/archive/"
+
+
       - name: Commit and push
         if: env.SKIP_JOB != 'true' && (success() || failure())
         run: |
-          # Stage everything under research/ — captures:
-          #   - new .log in research/ (or research/archive/ if moved)
-          #   - deletions from research/ after archive move
-          #   - additions in research/archive/
+          echo "=== [DEBUG] git status before add ==="
+          git status --short research/
           git add -A research/
           git add research_summary.md
+          echo "=== [DEBUG] git diff --cached (staged files) ==="
+          git diff --cached --name-status
           git diff --cached --quiet && echo "No changes." || \
             git commit -m "eda: ${{ inputs.file_id }}"
           git push origin dev
