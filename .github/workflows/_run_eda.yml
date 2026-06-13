@@ -89,7 +89,7 @@ jobs:
               "Fix: ensure the file is committed to research/ before calling /run-eda." \
               > "$RUNNER_TEMP/eda_output/eda.log"
             exit 1
-          fis
+          fi
 
       - name: Restore canonical test_runner.py
         if: env.SKIP_JOB != 'true'
