@@ -303,8 +303,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/backtest_output"
           chmod 0777 "$RUNNER_TEMP/backtest_output"
           docker run \
-            --memory=4g \
-            --cpus=2 \
+            --memory=12g \
+            --cpus=4 \
             --rm \
             --workdir /output \
             -e MODE=backtest \
