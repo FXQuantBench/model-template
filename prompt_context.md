@@ -211,6 +211,8 @@ A strategy that achieves Sharpe 2.0 in one backtest but degrades to Sharpe 0.2 a
 | `releases.md` | **R/W** | Add a `[vN]` entry before every `/submit-pr` command |
 | `test_runner.py` | **R/O** | Execution engine — writes are silently rejected |
 | `prompt_context.md` | **R/O** | This file — writes are silently rejected |
+| `research/*.log` | **R/O** | EDA output logs; written by the runner after each `/run-eda` run; named `<file_id>.log`. Read these to see EDA results. |
+| `backtest_results/*.log` | **R/O** | Failure logs for backtest runs; written by the runner when a `/run-backtest` fails; named `<run_id>.log`. Read this when a backtest fails to diagnose the traceback before issuing the next `/run-backtest`. |
 
 ---
 
@@ -230,7 +232,20 @@ EDA scripts run in isolation. Always print a concise first non-empty line that s
 
 `/run-eda <file_id>` is skipped if `research/<file_id>.log` already exists on `dev`. If you need to retry an EDA after any committed log, create a new script with a new `file_id`.
 
-### 5.1 Daily Evaluation and Adaptation
+### 5.1 Backtest Failure Recovery
+
+When a `/run-backtest` command fails, the runner commits a failure log to `backtest_results/<run_id>.log` on `dev` and then redispatches `agentic_loop.yml` with `trigger_source=run_backtest` and `trigger_details=failed run_id=<run_id>`.
+
+**When you see this trigger:**
+1. Read `backtest_results/<run_id>.log` — it contains the full Python traceback (or an OOM hint if the container was killed)
+2. Diagnose the specific error: `TypeError`, missing column, `vectorbt` crash, timeout, or OOM kill
+3. Fix `strategy.py` accordingly — do **not** issue `/run-eda` unless the crash reveals a fundamental misunderstanding of the data contract
+4. Update `audit_logs/thoughts.md` with your diagnosis and fix
+5. Re-issue `/run-backtest`
+
+The most recent failure log (last 100 lines) is included in your context under **"Latest backtest failure log"** so you can read it directly without any extra file access.
+
+### 5.2 Daily Evaluation and Adaptation
 
 Every day, your strategy is automatically evaluated on the **previous calendar day's real tick data** — data that was not available during in-sample development. Results are posted to the leaderboard as `eval/YYYY-MM-DD.json` with `sharpe`, `max_drawdown`, and `win_rate`.
 
@@ -292,3 +307,5 @@ You must respond with a single JSON object and nothing else:
 6. **EDA output must be informative immediately.** Print a concise first non-empty line that states the key result before any large tables. If an EDA attempt needs a retry after any committed log, use a new `file_id`.
 
 7. **Never hardcode secrets, tokens, or credentials in any file you write.** Do not embed API keys, HuggingFace tokens, GitHub tokens, or any other credential as a plain string in `strategy.py`, EDA scripts, or any other file. Credentials are injected by the runner via environment variables and are never visible to you. Any file containing a hardcoded secret will be rejected by the repository's secret scanning rules and the commit will be blocked.
+
+8. **Read `backtest_results/<run_id>.log` when the trigger is a failed backtest.** The log contains the full Python traceback (or an OOM hint). Fix the specific error in `strategy.py` before re-running. Do not issue `/run-eda` in response to a backtest crash unless the crash reveals a data contract misunderstanding.

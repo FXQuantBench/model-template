@@ -3,17 +3,18 @@ test_runner.py — read-only execution engine (protected by CODEOWNERS).
 
 Environment variables
 ---------------------
-HF_TOKEN       : HuggingFace read-only token for dataset access
-TICK_DATA_GLOB : optional local parquet glob mounted into the runner container
-MODE           : "eda" | "backtest" | "eval"
-EDA_SCRIPT     : path to EDA script (MODE=eda only)
-EDA_OUTPUT     : path where EDA stdout/stderr are written (MODE=eda only)
-START_DATE     : ISO date string "YYYY-MM-DD"  (backtest/eval)
-END_DATE       : ISO date string "YYYY-MM-DD"  (backtest/eval; exclusive upper bound)
-RUN_ID         : run identifier string (backtest/eval)
-MODEL_ID       : model identifier (backtest/eval)
-OUTPUT_DIR     : directory where result.json is written (backtest/eval)
-STRATEGY_SHA   : git SHA of strategy.py at time of run
+HF_TOKEN            : HuggingFace read-only token for dataset access
+TICK_DATA_GLOB      : optional local parquet glob mounted into the runner container
+MODE                : "eda" | "backtest" | "eval"
+EDA_SCRIPT          : path to EDA script (MODE=eda only)
+EDA_OUTPUT          : path where EDA stdout/stderr are written (MODE=eda only)
+BACKTEST_LOG_OUTPUT : path where backtest stdout/stderr are written (MODE=backtest/eval only)
+START_DATE          : ISO date string "YYYY-MM-DD"  (backtest/eval)
+END_DATE            : ISO date string "YYYY-MM-DD"  (backtest/eval; exclusive upper bound)
+RUN_ID              : run identifier string (backtest/eval)
+MODEL_ID            : model identifier (backtest/eval)
+OUTPUT_DIR          : directory where result.json is written (backtest/eval)
+STRATEGY_SHA        : git SHA of strategy.py at time of run
 """
 
 import contextlib
@@ -278,6 +279,12 @@ def _write_eda_failure_log(message: str) -> None:
     eda_output.write_text(message)
 
 
+def _write_backtest_failure_log(message: str) -> None:
+    backtest_log = Path(os.environ.get("BACKTEST_LOG_OUTPUT", "/output/backtest.log"))
+    backtest_log.parent.mkdir(parents=True, exist_ok=True)
+    backtest_log.write_text(message)
+
+
 def _handle_failure(run_id: str, mode: str, model_id: str,
                     strategy_sha: str, start_date: str, end_date: str,
                     t_start: float, error_text: str | None = None) -> None:
@@ -286,6 +293,9 @@ def _handle_failure(run_id: str, mode: str, model_id: str,
         _write_eda_failure_log(message)
         return
 
+    # backtest / eval: write the failure log AND a zeroed-out result.json
+    message = error_text or f"ERROR: {mode} runner failed after {round(time.time() - t_start, 3)}s.\n"
+    _write_backtest_failure_log(message)
     _partial_timeout_result(run_id, mode, model_id, strategy_sha,
                             start_date, end_date, t_start)
 
@@ -465,19 +475,23 @@ def _compute_metrics(signals: pd.DataFrame, tick_data: pd.DataFrame,
 def run_backtest_eval(conn: duckdb.DuckDBPyConnection, mode: str, run_id: str,
                       model_id: str, strategy_sha: str,
                       start_date: str, end_date: str, t_start: float) -> None:
-    import strategy  # noqa: PLC0415  (intentional late import from /sandbox)
+    backtest_log = Path(os.environ.get("BACKTEST_LOG_OUTPUT", "/output/backtest.log"))
+    backtest_log.parent.mkdir(parents=True, exist_ok=True)
 
-    signals_df = strategy.run(conn, start_date, end_date)
+    with open(backtest_log, "w") as log_file:
+        with contextlib.redirect_stdout(log_file), contextlib.redirect_stderr(log_file):
+            import strategy  # noqa: PLC0415  (intentional late import from /sandbox)
 
-    if not isinstance(signals_df, pd.DataFrame):
-        raise TypeError(f"strategy.run() must return pd.DataFrame, got {type(signals_df)}")
+            signals_df = strategy.run(conn, start_date, end_date)
 
-    signals_df = _validate_signals(signals_df)
+            if not isinstance(signals_df, pd.DataFrame):
+                raise TypeError(f"strategy.run() must return pd.DataFrame, got {type(signals_df)}")
 
-    # Fetch raw tick data for the window (used for simulation)
-    tick_df = conn.execute("SELECT * FROM GBPUSD ORDER BY timestamp_utc").df()
+            signals_df = _validate_signals(signals_df)
 
-    metrics = _compute_metrics(signals_df, tick_df)
+            tick_df = conn.execute("SELECT * FROM GBPUSD ORDER BY timestamp_utc").df()
+
+            metrics = _compute_metrics(signals_df, tick_df)
 
     runtime = round(time.time() - t_start, 3)
     result = ResultSchema(**{

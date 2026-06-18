@@ -133,6 +133,22 @@ jobs:
           echo "$EVAL_SUMMARIES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
+      - name: Read latest backtest failure log
+        if: env.SKIP_JOB != 'true'
+        id: backtest_log
+        run: |
+          LATEST_LOG=$(ls -t backtest_results/*.log 2>/dev/null | head -1 || echo "")
+          if [ -n "$LATEST_LOG" ]; then
+            echo "path=$LATEST_LOG" >> "$GITHUB_OUTPUT"
+            CONTENT=$(tail -100 "$LATEST_LOG")
+            echo "content<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$CONTENT" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "content=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build context file
         if: env.SKIP_JOB != 'true'
         env:
@@ -163,9 +179,9 @@ jobs:
             echo ""
             cat releases.md
             echo ""
-            echo "## Last 20 lines of audit_logs/thoughts.md"
+            echo "## Last 100 lines of audit_logs/thoughts.md"
             echo ""
-            tail -20 audit_logs/thoughts.md
+            tail -100 audit_logs/thoughts.md
             echo ""
             echo "## Last 3 backtest summaries"
             echo ""
@@ -175,6 +191,12 @@ jobs:
             echo ""
             echo "${{ steps.leaderboard.outputs.eval_summaries }}"
             echo ""
+            if [ -n "${{ steps.backtest_log.outputs.path }}" ]; then
+              echo "## Latest backtest failure log (${{ steps.backtest_log.outputs.path }})"
+              echo ""
+              echo "${{ steps.backtest_log.outputs.content }}"
+              echo ""
+            fi
             echo "## Trigger"
             echo ""
             echo "$TRIGGER_INFO"

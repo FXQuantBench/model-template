@@ -298,10 +298,15 @@ jobs:
           SKIPPED_COUNT_VALUE="${SKIPPED_COUNT:-0}"
           echo "In-sample shard stage: cache_hit=${CACHE_HIT_VALUE} shard_count=${SHARD_COUNT}/${EXPECTED_COUNT} skipped_missing_days=${SKIPPED_COUNT_VALUE} cache_complete=${CACHE_COMPLETE_VALUE}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Run backtest container
+      # ── NEW: prepare backtest_output directory ──────────────────────────
+      - name: Prepare backtest output directory
         run: |
           mkdir -p "$RUNNER_TEMP/backtest_output"
           chmod 0777 "$RUNNER_TEMP/backtest_output"
+
+      - name: Run backtest container
+        id: run_backtest
+        run: |
           docker run \
             --memory=12g \
             --cpus=4 \
@@ -316,6 +321,7 @@ jobs:
             -e OUTPUT_DIR="/output" \
             -e STRATEGY_SHA="${{ steps.run_id.outputs.strategy_sha }}" \
             -e TICK_DATA_GLOB="/input/*.parquet" \
+            -e BACKTEST_LOG_OUTPUT="/output/backtest.log" \
             -v "$GITHUB_WORKSPACE:/sandbox:ro" \
             -v "${{ steps.insample_cache_metadata.outputs.stage_dir }}:/input:ro" \
             -v "$RUNNER_TEMP/backtest_output:/output" \
@@ -328,6 +334,48 @@ jobs:
           fi
 
           cp "$RUNNER_TEMP/backtest_output/result.json" "$GITHUB_WORKSPACE/result.json"
+
+      # ── NEW: capture failure log ─────────────────────────────────────────
+      - name: Capture backtest failure log
+        if: failure() && steps.run_backtest.outcome == 'failure'
+        run: |
+          LOG="$RUNNER_TEMP/backtest_output/backtest.log"
+          sudo chown "$USER" "$LOG" 2>/dev/null || true
+          LOG_SIZE=$(stat -c%s "$LOG" 2>/dev/null || echo 0)
+          if [ "$LOG_SIZE" -lt 10 ]; then
+            printf '%s\n' \
+              "ERROR exit=137: OOM kill — container exceeded 12 GB memory limit." \
+              "Use aggregated DuckDB queries. Avoid SELECT * FROM GBPUSD into pandas." \
+              "Prefer GROUP BY/LIMIT queries. Call gc.collect() after large DataFrames." \
+              > "$LOG"
+          fi
+
+      # ── NEW: truncate log to 5 MB ────────────────────────────────────────
+      - name: Truncate backtest log to 5 MB
+        if: always()
+        run: |
+          LOG_PATH="$RUNNER_TEMP/backtest_output/backtest.log"
+          if [ ! -f "$LOG_PATH" ]; then
+            exit 0
+          fi
+          MAX_BYTES=$(( 5 * 1024 * 1024 ))
+          SIZE=$(stat -c%s "$LOG_PATH" 2>/dev/null || echo 0)
+          if [ "$SIZE" -gt "$MAX_BYTES" ]; then
+            truncate -s "$MAX_BYTES" "$LOG_PATH"
+            echo "" >> "$LOG_PATH"
+            echo "[output truncated at 5 MB]" >> "$LOG_PATH"
+          fi
+
+      # ── NEW: copy log into repo folder ───────────────────────────────────
+      - name: Copy log to backtest_results/
+        if: always()
+        run: |
+          LOG_PATH="$RUNNER_TEMP/backtest_output/backtest.log"
+          if [ ! -f "$LOG_PATH" ]; then
+            exit 0
+          fi
+          mkdir -p backtest_results
+          cp "$LOG_PATH" "backtest_results/${{ steps.run_id.outputs.run_id }}.log"
 
       - name: Validate result.json
         run: |
@@ -434,9 +482,21 @@ jobs:
               f.write(summary)
           PYEOF
 
-      - name: Commit releases.md and push
+      # ── UPDATED: always commit backtest_results/ + releases.md ──────────
+      - name: Commit backtest_results/ and releases.md and push
+        if: always()
         run: |
-          git add releases.md
+          git add backtest_results/ releases.md
           git diff --cached --quiet && echo "No changes." || \
-            git commit -m "backtest: ${{ steps.run_id.outputs.run_id }} — update releases.md"
+            git commit -m "backtest: ${{ steps.run_id.outputs.run_id }}"
           git push origin dev
+
+      # ── NEW: redispatch agentic loop on failure ───────────────────────────
+      - name: Redispatch agentic loop on failure
+        if: failure()
+        run: |
+          gh workflow run agentic_loop.yml \
+            --repo "${{ inputs.repo }}" \
+            --ref main \
+            -f trigger_source=run_backtest \
+            -f trigger_details="failed run_id=${{ steps.run_id.outputs.run_id }}"
