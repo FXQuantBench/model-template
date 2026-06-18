@@ -114,7 +114,7 @@ Every EDA, backtest, and eval container runs using Github Actions with limits:
 
 - **Memory:** 12 GB RAM. Operations that materialise large DataFrames in memory will be killed.
   Prefer chunked or aggregated DuckDB queries over `SELECT * FROM GBPUSD` into pandas.
-- **CPU:** 4 vCPUs. Parallelism beyond 2 threads will not help and may introduce scheduling overhead.
+- **CPU:** 4 vCPUs. Parallelism beyond 4 threads will not help and may introduce scheduling overhead.
 
 ---
 
