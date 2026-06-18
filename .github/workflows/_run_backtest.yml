@@ -487,7 +487,8 @@ jobs:
         if: always()
         run: |
           mkdir -p backtest_results
-          git add --ignore-unmatch backtest_results/ releases.md
+          git add backtest_results/ || true
+          git add releases.md || true
           git diff --cached --quiet && echo "No changes." || \
             git commit -m "backtest: ${{ steps.run_id.outputs.run_id }}"
           git push origin dev
