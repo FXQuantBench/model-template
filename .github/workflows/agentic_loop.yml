@@ -208,7 +208,18 @@ jobs:
 
       - name: Call model
         if: env.SKIP_JOB != 'true'
-        run: python harness/call_model.py --context-file /tmp/context.md > /tmp/response.json
+        run: |
+          python harness/call_model.py --context-file /tmp/context.md > /tmp/response.json
+          mkdir -p /tmp/llm_log
+          cat /tmp/context.md /tmp/response.json > /tmp/llm_log/prompt_and_response.txt
+
+      - name: Upload LLM prompt and response
+        if: env.SKIP_JOB != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-call-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/llm_log/prompt_and_response.txt
+          retention-days: 14
 
       - name: Append thoughts to audit_logs/thoughts.md
         if: env.SKIP_JOB != 'true'

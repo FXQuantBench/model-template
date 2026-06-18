@@ -486,17 +486,8 @@ jobs:
       - name: Commit backtest_results/ and releases.md and push
         if: always()
         run: |
-          git add backtest_results/ releases.md
+          mkdir -p backtest_results
+          git add --ignore-unmatch backtest_results/ releases.md
           git diff --cached --quiet && echo "No changes." || \
             git commit -m "backtest: ${{ steps.run_id.outputs.run_id }}"
           git push origin dev
-
-      # ── NEW: redispatch agentic loop on failure ───────────────────────────
-      - name: Redispatch agentic loop on failure
-        if: failure()
-        run: |
-          gh workflow run agentic_loop.yml \
-            --repo "${{ inputs.repo }}" \
-            --ref main \
-            -f trigger_source=run_backtest \
-            -f trigger_details="failed run_id=${{ steps.run_id.outputs.run_id }}"
