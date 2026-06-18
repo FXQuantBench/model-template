@@ -134,7 +134,7 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Read latest backtest failure log
-        if: env.SKIP_JOB != 'true'
+        if: env.SKIP_JOB != 'true' && inputs.trigger_source == 'run_backtest'
         id: backtest_log
         run: |
           LATEST_LOG=$(ls -t backtest_results/*.log 2>/dev/null | head -1 || echo "")
